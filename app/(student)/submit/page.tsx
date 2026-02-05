@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useReducer } from 'react'
 import { useRouter } from 'next/navigation'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -49,31 +49,99 @@ import {
 import { buildEnrichedDescription } from '@/lib/triage/question-generator'
 import { validateReportInput } from '@/lib/validate-report'
 import Link from 'next/link'
+import { useApiOptions } from '@/hooks/use-api-options'
+
+// --- Submission flow state (useReducer for predictable transitions) ---
+type SubmitFlowState = {
+  submitted: boolean
+  submittedIssueId: string | null
+  showCrisisResources: boolean
+  submissionProgress: number | null
+  showSmartQuestions: boolean
+  pendingSubmission: { data: IssueFormData; questions: SmartQuestion[]; estimatedTime: number } | null
+  pendingFinalStep: IssueFormData | null
+  finalStepCategoryId: string
+  finalStepLocationId: string
+}
+
+type SubmitFlowAction =
+  | { type: 'SUBMIT_PROGRESS'; progress: number | null }
+  | { type: 'SUBMIT_SUCCESS'; issueId: string; showCrisis: boolean }
+  | { type: 'SUBMIT_ERROR' }
+  | { type: 'SHOW_SMART_QUESTIONS'; payload: { data: IssueFormData; questions: SmartQuestion[]; estimatedTime: number } }
+  | { type: 'CLOSE_SMART_QUESTIONS' }
+  | { type: 'SMART_ANSWERS_DONE'; enrichedData: IssueFormData; needsFinalStep: boolean; categoryId?: string; locationId?: string }
+  | { type: 'SET_FINAL_STEP_IDS'; categoryId: string; locationId: string }
+  | { type: 'FINAL_STEP_SUBMIT' }
+  | { type: 'CLOSE_FINAL_STEP' }
+  | { type: 'RESET_SUBMISSION' }
+  | { type: 'CLOSE_CRISIS' }
+
+const initialSubmitFlow: SubmitFlowState = {
+  submitted: false,
+  submittedIssueId: null,
+  showCrisisResources: false,
+  submissionProgress: null,
+  showSmartQuestions: false,
+  pendingSubmission: null,
+  pendingFinalStep: null,
+  finalStepCategoryId: '',
+  finalStepLocationId: '',
+}
+
+function submitFlowReducer(state: SubmitFlowState, action: SubmitFlowAction): SubmitFlowState {
+  switch (action.type) {
+    case 'SUBMIT_PROGRESS':
+      return { ...state, submissionProgress: action.progress }
+    case 'SUBMIT_SUCCESS':
+      return {
+        ...state,
+        submitted: true,
+        submittedIssueId: action.issueId,
+        submissionProgress: null,
+        showCrisisResources: action.showCrisis,
+      }
+    case 'SUBMIT_ERROR':
+      return { ...state, submissionProgress: null }
+    case 'SHOW_SMART_QUESTIONS':
+      return {
+        ...state,
+        submissionProgress: null,
+        showSmartQuestions: true,
+        pendingSubmission: action.payload,
+      }
+    case 'CLOSE_SMART_QUESTIONS':
+      return { ...state, showSmartQuestions: false, pendingSubmission: null }
+    case 'SMART_ANSWERS_DONE':
+      return {
+        ...state,
+        showSmartQuestions: false,
+        pendingSubmission: null,
+        pendingFinalStep: action.needsFinalStep ? action.enrichedData : null,
+        finalStepCategoryId: action.categoryId ?? '',
+        finalStepLocationId: action.locationId ?? '',
+      }
+    case 'SET_FINAL_STEP_IDS':
+      return { ...state, finalStepCategoryId: action.categoryId, finalStepLocationId: action.locationId }
+    case 'FINAL_STEP_SUBMIT':
+      return { ...state, pendingFinalStep: null }
+    case 'CLOSE_FINAL_STEP':
+      return { ...state, pendingFinalStep: null }
+    case 'RESET_SUBMISSION':
+      return { ...initialSubmitFlow }
+    case 'CLOSE_CRISIS':
+      return { ...state, showCrisisResources: false }
+    default:
+      return state
+  }
+}
 
 export default function SubmitIssuePage() {
   const router = useRouter()
   const { user } = useAuthStore()
-  const { submitIssue, addIssueFromStream, isSubmitting, myIssues, fetchMyIssues, error: submitError, clearError } = useIssueStore()
-  const [submitted, setSubmitted] = useState(false)
-  const [submittedIssueId, setSubmittedIssueId] = useState<string | null>(null)
-  const [showCrisisResources, setShowCrisisResources] = useState(false)
-  const [submissionProgress, setSubmissionProgress] = useState<number | null>(null)
-  const [showSmartQuestions, setShowSmartQuestions] = useState(false)
-  const [pendingSubmission, setPendingSubmission] = useState<{
-    data: IssueFormData
-    questions: SmartQuestion[]
-    estimatedTime: number
-  } | null>(null)
-  /** When set, smart questions are done but category/location (or description length) still needed before final submit. */
-  const [pendingFinalStep, setPendingFinalStep] = useState<IssueFormData | null>(null)
-  const [finalStepCategoryId, setFinalStepCategoryId] = useState('')
-  const [finalStepLocationId, setFinalStepLocationId] = useState('')
-
-  // Categories and locations from API (real DB IDs) – required for submission to succeed
-  const [apiCategories, setApiCategories] = useState<Array<{ id: string; name: string }>>([])
-  const [apiLocations, setApiLocations] = useState<Array<{ id: string; name: string; type: LocationType }>>([])
-  const [optionsLoading, setOptionsLoading] = useState(true)
-  const [optionsError, setOptionsError] = useState<string | null>(null)
+  const { addIssueFromStream, myIssues, fetchMyIssues, error: submitError, clearError } = useIssueStore()
+  const [submitFlow, dispatch] = useReducer(submitFlowReducer, initialSubmitFlow)
+  const { apiCategories, apiLocations, optionsLoading, optionsError } = useApiOptions()
 
   const form = useForm<IssueFormData>({
     resolver: zodResolver(issueFormSchemaSoft) as Resolver<IssueFormData>,
@@ -85,33 +153,6 @@ export default function SubmitIssuePage() {
     },
   })
 
-  // Fetch categories and locations from API so form uses real DB IDs (not mock slugs)
-  useEffect(() => {
-    let cancelled = false
-    setOptionsLoading(true)
-    setOptionsError(null)
-    Promise.all([
-      fetch('/api/categories').then((r) => r.json()),
-      fetch('/api/locations').then((r) => r.json()),
-    ])
-      .then(([catRes, locRes]) => {
-        if (cancelled) return
-        const err: string[] = []
-        if (catRes.success && catRes.data) setApiCategories(catRes.data)
-        else err.push(catRes.error?.message || 'Failed to load categories')
-        if (locRes.success && locRes.data) setApiLocations(locRes.data)
-        else err.push(locRes.error?.message || 'Failed to load locations')
-        if (err.length) setOptionsError(err.join('. '))
-      })
-      .catch((err) => {
-        if (!cancelled) setOptionsError(err?.message || 'Failed to load options')
-      })
-      .finally(() => {
-        if (!cancelled) setOptionsLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [])
-
   // Fetch user's issues for the preview section
   useEffect(() => {
     const userId = user?.id || 'student-1'
@@ -119,7 +160,7 @@ export default function SubmitIssuePage() {
   }, [user?.id, fetchMyIssues])
 
   const submitStream = async (formData: IssueFormData) => {
-    setSubmissionProgress(5)
+    dispatch({ type: 'SUBMIT_PROGRESS', progress: 5 })
     try {
       const res = await fetch('/api/issues/create/stream', {
         method: 'POST',
@@ -154,12 +195,12 @@ export default function SubmitIssuePage() {
           try {
             const event = JSON.parse(match[1]) as { stage: string; progress: number; message?: string; data?: unknown }
             const p = event.progress ?? 0
-            if (typeof p === 'number') setSubmissionProgress(p)
+            if (typeof p === 'number') dispatch({ type: 'SUBMIT_PROGRESS', progress: p })
             if (event.stage === 'error') {
               const msg = event.message ?? 'Something went wrong.'
               const isSpamRejection = /spam|test|content policy/i.test(msg)
               toast.error(isSpamRejection ? 'Report not submitted' : 'Submission failed', { description: msg })
-              setSubmissionProgress(null)
+              dispatch({ type: 'SUBMIT_ERROR' })
               return
             }
             if (event.stage === 'complete' && event.data && typeof event.data === 'object' && 'issue_id' in event.data) {
@@ -172,17 +213,14 @@ export default function SubmitIssuePage() {
                 requires_immediate_action?: boolean
               }
               addIssueFromStream(d, formData)
-              setSubmittedIssueId(d.issue_id)
-              setSubmitted(true)
-              setSubmissionProgress(null)
               toast.success('Issue submitted', {
                 description: 'Your report has been received and is being processed. You can track it in My Issues.',
               })
-              const isCriticalOrImmediate =
+              const showCrisis =
                 d.urgency_level === 'CRITICAL' ||
                 d.urgency_level === 'HIGH' ||
                 d.requires_immediate_action === true
-              if (isCriticalOrImmediate) setShowCrisisResources(true)
+              dispatch({ type: 'SUBMIT_SUCCESS', issueId: d.issue_id, showCrisis })
               return
             }
           } catch {
@@ -190,12 +228,12 @@ export default function SubmitIssuePage() {
           }
         }
       }
-      setSubmissionProgress(null)
+      dispatch({ type: 'SUBMIT_ERROR' })
       toast.error('Submission failed', { description: 'No response from server' })
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to submit issue'
       toast.error('Submission failed', { description: message })
-      setSubmissionProgress(null)
+      dispatch({ type: 'SUBMIT_ERROR' })
     }
   }
 
@@ -206,7 +244,7 @@ export default function SubmitIssuePage() {
       toast.warning(validation.warning ?? 'Please provide more details.')
       return
     }
-    setSubmissionProgress(5)
+    dispatch({ type: 'SUBMIT_PROGRESS', progress: 5 })
     try {
       const checkRes = await fetch('/api/issues/smart-check', {
         method: 'POST',
@@ -215,63 +253,65 @@ export default function SubmitIssuePage() {
       })
       const checkJson = await checkRes.json()
       if (checkJson.rejected_spam) {
-        setSubmissionProgress(null)
+        dispatch({ type: 'SUBMIT_ERROR' })
         toast.error('Report not submitted', { description: checkJson.message ?? 'This looks like a test or spam. Please describe a real campus issue.' })
         return
       }
       if (!checkRes.ok) {
-        setSubmissionProgress(null)
+        dispatch({ type: 'SUBMIT_ERROR' })
         toast.error('Something went wrong', { description: checkJson.error?.message ?? 'Please try again.' })
         return
       }
       if (checkJson.success && checkJson.needs_questions && Array.isArray(checkJson.questions) && checkJson.questions.length > 0) {
-        setSubmissionProgress(null)
-        setPendingSubmission({
-          data,
-          questions: checkJson.questions,
-          estimatedTime: checkJson.estimated_time ?? 10,
+        dispatch({
+          type: 'SHOW_SMART_QUESTIONS',
+          payload: {
+            data,
+            questions: checkJson.questions,
+            estimatedTime: checkJson.estimated_time ?? 10,
+          },
         })
-        setShowSmartQuestions(true)
         return
       }
       await submitStream(data)
     } catch (error) {
-      setSubmissionProgress(null)
+      dispatch({ type: 'SUBMIT_ERROR' })
       const message = error instanceof Error ? error.message : 'Failed to submit issue'
       toast.error('Submission failed', { description: message })
     }
   }
 
   const handleSmartAnswers = (answers: Record<string, string>) => {
-    if (!pendingSubmission) return
+    if (!submitFlow.pendingSubmission) return
     const enrichedDescription = buildEnrichedDescription(
-      pendingSubmission.data.title,
-      pendingSubmission.data.description,
+      submitFlow.pendingSubmission.data.title,
+      submitFlow.pendingSubmission.data.description,
       answers,
-      pendingSubmission.questions
+      submitFlow.pendingSubmission.questions
     )
     const enrichedData: IssueFormData = {
-      ...pendingSubmission.data,
+      ...submitFlow.pendingSubmission.data,
       description: enrichedDescription,
     }
-    setShowSmartQuestions(false)
-    setPendingSubmission(null)
     const hasCategory = !!enrichedData.category_id?.trim()
     const hasLocation = !!enrichedData.location_id?.trim()
     const hasEnoughDescription = enrichedData.description.length >= 20
+    dispatch({
+      type: 'SMART_ANSWERS_DONE',
+      enrichedData,
+      needsFinalStep: !(hasCategory && hasLocation && hasEnoughDescription),
+      categoryId: enrichedData.category_id?.trim(),
+      locationId: enrichedData.location_id?.trim(),
+    })
     if (hasCategory && hasLocation && hasEnoughDescription) {
       submitStream(enrichedData)
-    } else {
-      setFinalStepCategoryId(enrichedData.category_id?.trim() ?? '')
-      setFinalStepLocationId(enrichedData.location_id?.trim() ?? '')
-      setPendingFinalStep(enrichedData)
     }
   }
 
   const handleFinalStepSubmit = (category_id: string, location_id: string) => {
-    if (!pendingFinalStep) return
+    if (!submitFlow.pendingFinalStep) return
     const completed: IssueFormData = {
-      ...pendingFinalStep,
+      ...submitFlow.pendingFinalStep,
       category_id,
       location_id,
     }
@@ -283,7 +323,7 @@ export default function SubmitIssuePage() {
         return
       }
     }
-    setPendingFinalStep(null)
+    dispatch({ type: 'FINAL_STEP_SUBMIT' })
     submitStream(completed)
   }
 
@@ -314,10 +354,10 @@ export default function SubmitIssuePage() {
   const activeIssues = myIssues.filter(issue => issue.status !== 'resolved')
   const resolvedCount = myIssues.filter(issue => issue.status === 'resolved').length
 
-  if (submitted && submittedIssueId) {
+  if (submitFlow.submitted && submitFlow.submittedIssueId) {
     return (
       <>
-        <CrisisResourcesModal open={showCrisisResources} onClose={() => setShowCrisisResources(false)} />
+        <CrisisResourcesModal open={submitFlow.showCrisisResources} onClose={() => dispatch({ type: 'CLOSE_CRISIS' })} />
         <div className="mx-auto max-w-2xl">
         <Card className="border-2 border-primary/20">
           <CardHeader className="text-center">
@@ -332,7 +372,7 @@ export default function SubmitIssuePage() {
           <CardContent className="space-y-4">
             <div className="rounded-lg bg-muted p-4">
               <p className="text-sm text-muted-foreground">Issue ID</p>
-              <p className="font-mono text-lg font-semibold">{submittedIssueId}</p>
+              <p className="font-mono text-lg font-semibold">{submitFlow.submittedIssueId}</p>
             </div>
             <p className="text-center text-sm text-muted-foreground">
               You can track the status of your issue in the &quot;My Issues&quot; section.
@@ -345,8 +385,7 @@ export default function SubmitIssuePage() {
                 variant="outline"
                 className="flex-1"
                 onClick={() => {
-                  setSubmitted(false)
-                  setSubmittedIssueId(null)
+                  dispatch({ type: 'RESET_SUBMISSION' })
                   form.reset()
                 }}
               >
@@ -362,21 +401,18 @@ export default function SubmitIssuePage() {
 
   return (
     <>
-      {showSmartQuestions && pendingSubmission && (
+      {submitFlow.showSmartQuestions && submitFlow.pendingSubmission && (
         <SmartQuestionsModal
-          open={showSmartQuestions}
-          onClose={() => {
-            setShowSmartQuestions(false)
-            setPendingSubmission(null)
-          }}
+          open={submitFlow.showSmartQuestions}
+          onClose={() => dispatch({ type: 'CLOSE_SMART_QUESTIONS' })}
           onSubmit={handleSmartAnswers}
-          questions={pendingSubmission.questions}
-          title={pendingSubmission.data.title}
-          estimatedTime={pendingSubmission.estimatedTime}
+          questions={submitFlow.pendingSubmission.questions}
+          title={submitFlow.pendingSubmission.data.title}
+          estimatedTime={submitFlow.pendingSubmission.estimatedTime}
         />
       )}
-      {pendingFinalStep && (
-        <Dialog open={!!pendingFinalStep} onOpenChange={(open) => !open && setPendingFinalStep(null)}>
+      {submitFlow.pendingFinalStep && (
+        <Dialog open={!!submitFlow.pendingFinalStep} onOpenChange={(open) => !open && dispatch({ type: 'CLOSE_FINAL_STEP' })}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
               <DialogTitle>Almost there</DialogTitle>
@@ -387,7 +423,7 @@ export default function SubmitIssuePage() {
             <div className="grid gap-4 py-4">
               <div className="space-y-2">
                 <label className="text-sm font-medium">Issue Category</label>
-                <Select value={finalStepCategoryId} onValueChange={setFinalStepCategoryId}>
+                <Select value={submitFlow.finalStepCategoryId} onValueChange={(v) => dispatch({ type: 'SET_FINAL_STEP_IDS', categoryId: v, locationId: submitFlow.finalStepLocationId })}>
                   <SelectTrigger className="h-10">
                     <SelectValue placeholder="Select a category..." />
                   </SelectTrigger>
@@ -423,7 +459,7 @@ export default function SubmitIssuePage() {
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-medium">Campus Zone / Location</label>
-                <Select value={finalStepLocationId} onValueChange={setFinalStepLocationId}>
+                <Select value={submitFlow.finalStepLocationId} onValueChange={(v) => dispatch({ type: 'SET_FINAL_STEP_IDS', categoryId: submitFlow.finalStepCategoryId, locationId: v })}>
                   <SelectTrigger className="h-10">
                     <SelectValue placeholder="Select location..." />
                   </SelectTrigger>
@@ -443,10 +479,10 @@ export default function SubmitIssuePage() {
               </div>
               <Button
                 className="w-full"
-                disabled={!finalStepCategoryId || !finalStepLocationId || !!submissionProgress}
-                onClick={() => handleFinalStepSubmit(finalStepCategoryId, finalStepLocationId)}
+                disabled={!submitFlow.finalStepCategoryId || !submitFlow.finalStepLocationId || submitFlow.submissionProgress !== null}
+                onClick={() => handleFinalStepSubmit(submitFlow.finalStepCategoryId, submitFlow.finalStepLocationId)}
               >
-                {submissionProgress !== null ? 'Submitting...' : 'Submit Report'}
+                {submitFlow.submissionProgress !== null ? 'Submitting...' : 'Submit Report'}
               </Button>
             </div>
           </DialogContent>
@@ -488,12 +524,12 @@ export default function SubmitIssuePage() {
                   <AlertDescription>{submitError}</AlertDescription>
                 </Alert>
               )}
-              {submissionProgress !== null && (
+              {submitFlow.submissionProgress !== null && (
                 <div className="mb-6 rounded-lg border bg-muted/30 p-4">
                   <p className="mb-3 text-sm font-medium">
-                    {submissionProgress <= 15 ? 'Checking report...' : 'Submitting your report'}
+                    {submitFlow.submissionProgress <= 15 ? 'Checking report...' : 'Submitting your report'}
                   </p>
-                  <SubmissionProgressBar progress={submissionProgress} />
+                  <SubmissionProgressBar progress={submitFlow.submissionProgress} />
                 </div>
               )}
               <Form {...form}>
@@ -629,12 +665,12 @@ export default function SubmitIssuePage() {
                       type="submit"
                       size="lg"
                       className="min-w-[160px] shadow-lg shadow-primary/20"
-                      disabled={submissionProgress !== null}
+                      disabled={submitFlow.submissionProgress !== null}
                     >
-                      {submissionProgress !== null ? (
+                      {submitFlow.submissionProgress !== null ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          {submissionProgress <= 15 ? 'Checking...' : 'Submitting...'}
+                          {submitFlow.submissionProgress <= 15 ? 'Checking...' : 'Submitting...'}
                         </>
                       ) : (
                         <>
