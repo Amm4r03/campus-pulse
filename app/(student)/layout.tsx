@@ -12,7 +12,8 @@ import {
   X,
   Home,
   Bell,
-  Search
+  Search,
+  Compass
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SidebarNav, BreadcrumbNav, UserProfile } from '@/components/layout'
@@ -24,6 +25,7 @@ const studentNavGroups = [
     label: 'Main Menu',
     items: [
       { href: '/submit', label: 'Submit Issue', icon: PlusCircle },
+      { href: '/track', label: 'Track Issues', icon: Compass },
       { href: '/issues', label: 'My Issues', icon: FileText },
     ],
   },
