@@ -329,7 +329,7 @@ export default function SubmitIssuePage() {
 
   // Group locations by type for dropdown (from API data)
   const groupedLocations = apiLocations.reduce<Record<string, typeof apiLocations>>((acc, loc) => {
-    const t = loc.type
+    const t = loc.type ?? 'other'
     if (!acc[t]) acc[t] = []
     acc[t].push(loc)
     return acc
@@ -466,7 +466,7 @@ export default function SubmitIssuePage() {
                   <SelectContent>
                     {Object.entries(groupedLocations).map(([type, locations]) => (
                       <SelectGroup key={type}>
-                        <SelectLabel>{LOCATION_TYPE_LABELS[type as keyof typeof LOCATION_TYPE_LABELS]}</SelectLabel>
+                        <SelectLabel>{LOCATION_TYPE_LABELS[type as keyof typeof LOCATION_TYPE_LABELS] ?? 'Other'}</SelectLabel>
                         {locations.map((location) => (
                           <SelectItem key={location.id} value={location.id}>
                             {location.name}
@@ -601,7 +601,7 @@ export default function SubmitIssuePage() {
                               {Object.entries(groupedLocations).map(([type, locations]) => (
                                 <SelectGroup key={type}>
                                   <SelectLabel>
-                                    {LOCATION_TYPE_LABELS[type as keyof typeof LOCATION_TYPE_LABELS]}
+                                    {LOCATION_TYPE_LABELS[type as keyof typeof LOCATION_TYPE_LABELS] ?? 'Other'}
                                   </SelectLabel>
                                   {locations.map((location) => (
                                     <SelectItem key={location.id} value={location.id}>
