@@ -27,16 +27,47 @@ interface AdminState {
     resolved: number
     highPriority: number
   }
+  /** Total count of individual issue reports (for Issues nav badge) */
+  reportCount: number
+  /** Most reported location (for dashboard stat card) */
+  mostReportedLocation: string | null
+  /** Spam reports (for admin spam tab) */
+  spamReports: SpamReportItem[]
+  /** Count of spam reports (muted badge in nav) */
+  spamCount: number
+  /** Resolved count from DB (all time) for analytics */
+  resolvedCount: number
+  /** Resolved today count from DB for "Issues closed" card */
+  resolvedTodayCount: number
+}
+
+export interface SpamReportItem {
+  id: string
+  title: string
+  description: string
+  created_at: string
+  category_name: string
+  location_name: string
+  report_type: string
+  spam_confidence: number
 }
 
 interface AdminActions {
   // Data fetching
-  fetchAggregatedIssues: () => Promise<void>
+  /** Optional status override (e.g. 'open,in_progress' for Active tab, 'resolved' for Recently Resolved) */
+  fetchAggregatedIssues: (overrides?: { status?: AdminFilters['status'] }) => Promise<void>
+  fetchReportCount: () => Promise<void>
   fetchIssueById: (id: string) => Promise<void>
   fetchIssueActions: (issueId: string) => Promise<void>
   
   // Issue actions
   updateIssueStatus: (issueId: string, status: AggregatedIssue['status'], notes?: string) => Promise<void>
+  updateIssueAuthority: (issueId: string, authorityId: string) => Promise<void>
+  fetchMostReportedLocation: () => Promise<void>
+  fetchSpamCount: () => Promise<void>
+  fetchSpamReports: () => Promise<void>
+  markReportNotSpam: (reportId: string) => Promise<void>
+  fetchResolvedStats: () => Promise<void>
   
   // Selection
   selectIssue: (id: string | null) => void
@@ -55,6 +86,8 @@ const DEFAULT_FILTERS: AdminFilters = {
   status: 'all',
   category_id: 'all',
   location_id: 'all',
+  category_name: 'all',
+  location_name: 'all',
   date_range: { start: null, end: null },
   sort_by: 'priority',
   sort_order: 'desc',
@@ -85,19 +118,107 @@ export const useAdminStore = create<AdminStore>()((set, get) => ({
     resolved: 0,
     highPriority: 0,
   },
+  reportCount: 0,
+  mostReportedLocation: null,
+  spamReports: [],
+  spamCount: 0,
+  resolvedCount: 0,
+  resolvedTodayCount: 0,
+
+  fetchMostReportedLocation: async () => {
+    try {
+      const res = await fetch('/api/stats/locations/most-reported')
+      const data = await res.json()
+      if (data.success && data.location != null) {
+        set({ mostReportedLocation: data.location })
+      }
+    } catch {
+      // ignore
+    }
+  },
+
+  fetchSpamCount: async () => {
+    try {
+      const res = await fetch('/api/issues/admin/spam')
+      const data = await res.json()
+      if (data.success && data.data != null) {
+        set({ spamCount: data.data.count ?? 0 })
+      }
+    } catch {
+      // ignore
+    }
+  },
+
+  fetchSpamReports: async () => {
+    try {
+      const res = await fetch('/api/issues/admin/spam')
+      const data = await res.json()
+      if (data.success && data.data) {
+        set({
+          spamReports: data.data.items ?? [],
+          spamCount: data.data.count ?? 0,
+        })
+      }
+    } catch {
+      set({ spamReports: [], spamCount: 0 })
+    }
+  },
+
+  markReportNotSpam: async (reportId: string) => {
+    const res = await fetch(`/api/issues/admin/spam/${reportId}/mark-not-spam`, { method: 'POST' })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.error?.message ?? 'Failed to mark as not spam')
+    }
+    set(state => ({
+      spamReports: state.spamReports.filter(r => r.id !== reportId),
+      spamCount: Math.max(0, state.spamCount - 1),
+    }))
+  },
+
+  fetchResolvedStats: async () => {
+    try {
+      const res = await fetch('/api/stats/resolved')
+      const data = await res.json()
+      if (data.success && data.data) {
+        set({
+          resolvedCount: data.data.resolved_count ?? 0,
+          resolvedTodayCount: data.data.resolved_today_count ?? 0,
+        })
+      }
+    } catch {
+      // ignore
+    }
+  },
+
+  // Fetch total count of individual reports (for nav badge)
+  fetchReportCount: async () => {
+    try {
+      const res = await fetch('/api/issues/admin/reports?page=1&limit=1')
+      const data = await res.json()
+      if (data.success && data.data?.pagination?.total != null) {
+        set({ reportCount: data.data.pagination.total })
+      }
+    } catch {
+      // ignore
+    }
+  },
 
   // Fetch all aggregated issues from real API
-  fetchAggregatedIssues: async () => {
+  fetchAggregatedIssues: async (overrides) => {
     set({ isLoading: true, error: null })
     
     try {
       const { filters } = get()
+      const effective = { ...filters, ...overrides }
       
-      // Build query params
+      // Build query params (view filters by name: category_name, location_name)
       const params = new URLSearchParams()
-      if (filters.status !== 'all') params.set('status', filters.status)
-      if (filters.sort_by) params.set('sort_by', filters.sort_by)
-      if (filters.sort_order) params.set('order', filters.sort_order)
+      if (effective.status !== 'all') params.set('status', effective.status)
+      if (effective.category_name && effective.category_name !== 'all') params.set('category_name', effective.category_name)
+      if (effective.location_name && effective.location_name !== 'all') params.set('location_name', effective.location_name)
+      if (effective.sort_by) params.set('sort_by', effective.sort_by)
+      if (effective.sort_order) params.set('order', effective.sort_order)
       
       const response = await fetch(`/api/issues/admin?${params.toString()}`)
       
@@ -105,22 +226,23 @@ export const useAdminStore = create<AdminStore>()((set, get) => ({
         const data = await response.json()
         
         if (data.success && data.data?.items) {
-          // Map API response to AggregatedIssue format
+          // Map API response to AggregatedIssue format (view returns only names, no ids)
           const issues: AggregatedIssue[] = data.data.items.map((item: any) => ({
             id: item.id,
-            canonical_category_id: item.category_id,
-            location_id: item.location_id,
-            authority_id: item.authority_id,
+            canonical_category_id: '',
+            location_id: '',
+            authority_id: '',
             status: item.status,
-            priority_score: item.current_priority || 0,
-            total_reports: item.total_reports || 1,
-            frequency_30min: item.reports_last_30_min || 0,
+            priority_score: item.current_priority ?? 0,
+            total_reports: item.total_reports ?? 1,
+            frequency_30min: item.reports_last_30_min ?? 0,
             first_report_time: item.first_report_time,
             latest_report_time: item.latest_report_time,
             created_at: item.created_at,
             updated_at: item.updated_at,
-            category: item.category_name ? { id: item.category_id, name: item.category_name } : getCategoryById(item.category_id),
-            location: item.location_name ? { id: item.location_id, name: item.location_name } : getLocationById(item.location_id),
+            category: item.category_name != null ? { id: '', name: item.category_name, is_environmental: !!item.is_environmental } : undefined,
+            location: item.location_name != null ? { id: '', name: item.location_name } : undefined,
+            authority: item.authority_name != null ? { id: '', name: item.authority_name } : undefined,
           }))
           
           set({ 
@@ -128,6 +250,7 @@ export const useAdminStore = create<AdminStore>()((set, get) => ({
             isLoading: false,
             stats: calculateStats(issues),
           })
+          get().fetchMostReportedLocation()
           return
         }
       }
@@ -213,14 +336,14 @@ export const useAdminStore = create<AdminStore>()((set, get) => ({
     set({ isActionLoading: true, error: null })
     
     try {
+      const body =
+        status === 'resolved'
+          ? { action_type: 'resolve' as const, notes: notes || undefined }
+          : { action_type: 'change_status' as const, new_value: { status }, notes: notes || undefined }
       const response = await fetch(`/api/issues/${issueId}/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action_type: 'status_change',
-          new_value: status,
-          notes: notes || `Status changed to ${status}`,
-        }),
+        body: JSON.stringify(body),
       })
       
       if (response.ok) {
@@ -263,6 +386,30 @@ export const useAdminStore = create<AdminStore>()((set, get) => ({
       
       const { aggregatedIssues } = get()
       set({ stats: calculateStats(aggregatedIssues) })
+    }
+  },
+
+  updateIssueAuthority: async (issueId, authorityId) => {
+    set({ isActionLoading: true, error: null })
+    try {
+      const response = await fetch(`/api/issues/${issueId}/action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action_type: 'assign',
+          new_value: { authority_id: authorityId },
+        }),
+      })
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.error?.message ?? 'Failed to assign authority')
+      }
+      set({ isActionLoading: false })
+      await get().fetchAggregatedIssues()
+    } catch (error) {
+      console.error('Failed to assign authority:', error)
+      set({ isActionLoading: false, error: error instanceof Error ? error.message : 'Failed to assign' })
+      throw error
     }
   },
 
@@ -310,6 +457,12 @@ export const useAdminStore = create<AdminStore>()((set, get) => ({
         resolved: 0,
         highPriority: 0,
       },
+      reportCount: 0,
+      mostReportedLocation: null,
+      spamReports: [],
+      spamCount: 0,
+      resolvedCount: 0,
+      resolvedTodayCount: 0,
     }),
 }))
 
