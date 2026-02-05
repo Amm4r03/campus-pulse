@@ -109,8 +109,9 @@ export function calculateEnvironmentalComponent(isEnvironmental: boolean): numbe
 /** Welfare boost for reporter-in-distress (single-report escalation) */
 const WELFARE_BOOST = 20;
 
-/** Minimum score for immediate-action reports (single serious report) */
-const IMMEDIATE_ACTION_MIN = 95;
+/** Minimum score for immediate-action reports (single serious report). Exported for UI (e.g. immediate-review filter). */
+export const IMMEDIATE_REVIEW_PRIORITY_THRESHOLD = 95;
+const IMMEDIATE_ACTION_MIN = IMMEDIATE_REVIEW_PRIORITY_THRESHOLD;
 
 /**
  * Calculate full priority score with breakdown

@@ -55,6 +55,7 @@ import { useAdminStore } from '@/stores'
 import { useApiOptions } from '@/hooks/use-api-options'
 import { cn } from '@/lib/utils'
 import type { IssueStatus } from '@/types'
+import { IMMEDIATE_REVIEW_PRIORITY_THRESHOLD } from '@/domain/priority'
 import { ResolveIssueModal } from '@/components/resolve-issue-modal'
 import { AssignAuthorityModal } from '@/components/assign-authority-modal'
 
