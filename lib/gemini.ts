@@ -10,7 +10,7 @@ import type { AutomationOutput, ImpactScope } from '@/domain/types';
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 // Model configuration
-const MODEL_NAME = 'gemini-1.5-flash';
+const MODEL_NAME = 'gemini-2.5-flash';
 
 // Safety settings - allow all content since this is for issue triage
 const safetySettings = [
