@@ -19,8 +19,8 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 const DEMO_MODE = process.env.DEMO_MODE === 'true';
 
 // Demo user IDs (used when DEMO_MODE is enabled)
-const DEMO_STUDENT_ID = 'demo-student-00000000-0000-0000-0000-000000000001';
-const DEMO_ADMIN_ID = 'demo-admin-00000000-0000-0000-0000-000000000002';
+const DEMO_STUDENT_ID = '7bc80736-2dfe-46e2-996d-d546101ac3e1';
+const DEMO_ADMIN_ID = 'cce4192c-9103-4b03-9256-a3a4795b7483';
 
 /**
  * Create a Supabase client for server components/API routes
