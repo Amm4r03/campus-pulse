@@ -114,32 +114,30 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
 
         if (!automationResult.success) {
             console.warn('Automation pipeline failed but issue created:', automationResult.error);
-            const res = {
-                success: true,
-                data: {
-                    issue_id: issueReport.id,
-                    aggregated_issue_id: automationResult.aggregated_issue_id || 'pending',
-                    aggregation_status: 'new',
-                    initial_priority: automationResult.priority.total_score,
-                    urgency_level: urgencyLevel,
-                    requires_immediate_action: requiresImmediateAction,
-                },
+            const failureData: CreateIssueResponse = {
+                issue_id: issueReport.id,
+                aggregated_issue_id: automationResult.aggregated_issue_id || 'pending',
+                aggregation_status: 'new',
+                initial_priority: automationResult.priority.total_score,
+                urgency_level: urgencyLevel,
+                requires_immediate_action: requiresImmediateAction,
             };
+            const res: ApiResponse<CreateIssueResponse> = { success: true, data: failureData };
             logResponse('POST', '/api/issues/create', 201, res);
             return NextResponse.json(res, { status: 201 });
         }
 
-        const res = {
-            success: true,
-            data: {
-                issue_id: issueReport.id,
-                aggregated_issue_id: automationResult.aggregated_issue_id,
-                aggregation_status: automationResult.aggregation_status,
-                initial_priority: automationResult.priority.total_score,
-                urgency_level: urgencyLevel,
-                requires_immediate_action: requiresImmediateAction,
-            },
+        const aggregationStatus: 'new' | 'linked' =
+            automationResult.aggregation_status === 'new' ? 'new' : 'linked';
+        const data: CreateIssueResponse = {
+            issue_id: issueReport.id,
+            aggregated_issue_id: automationResult.aggregated_issue_id,
+            aggregation_status: aggregationStatus,
+            initial_priority: automationResult.priority.total_score,
+            urgency_level: urgencyLevel,
+            requires_immediate_action: requiresImmediateAction,
         };
+        const res: ApiResponse<CreateIssueResponse> = { success: true, data };
         logResponse('POST', '/api/issues/create', 201, res);
         return NextResponse.json(res, { status: 201 });
 

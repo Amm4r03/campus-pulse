@@ -49,6 +49,9 @@ export const issueFormSchemaSoft = z.object({
     .default(''),
 })
 
+/** Form values when using soft schema (optional category/location/description until final step). */
+export type IssueFormDataSoft = z.infer<typeof issueFormSchemaSoft>
+
 // ============================================
 // Login Form
 // ============================================

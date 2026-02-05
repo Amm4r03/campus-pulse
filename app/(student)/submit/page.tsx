@@ -29,6 +29,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { issueFormSchemaSoft, type IssueFormData } from '@/types/forms'
+import type { Resolver } from 'react-hook-form'
 import { useIssueStore, useAuthStore } from '@/stores'
 import { toast } from 'sonner'
 import { LOCATION_TYPE_LABELS } from '@/lib/data/locations'
@@ -75,7 +76,7 @@ export default function SubmitIssuePage() {
   const [optionsError, setOptionsError] = useState<string | null>(null)
 
   const form = useForm<IssueFormData>({
-    resolver: zodResolver(issueFormSchemaSoft),
+    resolver: zodResolver(issueFormSchemaSoft) as Resolver<IssueFormData>,
     defaultValues: {
       title: '',
       description: '',
