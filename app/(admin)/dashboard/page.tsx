@@ -219,7 +219,7 @@ export default function AdminDashboardPage() {
   const allSelected = paginatedIssues.length > 0 && paginatedIssues.every(i => selectedRows.has(i.id))
 
   // Single-report safety: issues requiring immediate human review (priority 95–100)
-  const immediateReviewIssues = aggregatedIssues.filter((i) => (i.priority_score ?? 0) >= 90)
+  const immediateReviewIssues = aggregatedIssues.filter((i) => (i.priority_score ?? 0) >= IMMEDIATE_REVIEW_PRIORITY_THRESHOLD)
 
   return (
     <div className="space-y-6">
