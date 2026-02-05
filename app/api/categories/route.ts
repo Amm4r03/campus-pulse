@@ -15,7 +15,15 @@ interface CategoryWithAuthority {
     default_authority: {
         id: string;
         name: string;
-    };
+    } | null;
+}
+
+// Supabase returns joins as arrays, so we need to handle that
+interface CategoryFromDB {
+    id: string;
+    name: string;
+    is_environmental: boolean;
+    default_authority: { id: string; name: string }[] | null;
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse<ApiResponse<CategoryWithAuthority[]>>> {
@@ -48,9 +56,17 @@ export async function GET(request: NextRequest): Promise<NextResponse<ApiRespons
             );
         }
 
+        // Map the data to flatten the authority relationship
+        const categories: CategoryWithAuthority[] = ((data || []) as CategoryFromDB[]).map(cat => ({
+            id: cat.id,
+            name: cat.name,
+            is_environmental: cat.is_environmental,
+            default_authority: cat.default_authority?.[0] || null,
+        }));
+
         return NextResponse.json({
             success: true,
-            data: (data || []) as CategoryWithAuthority[],
+            data: categories,
         });
 
     } catch (error) {
