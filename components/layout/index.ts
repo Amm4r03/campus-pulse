@@ -1,3 +1,5 @@
 export { Navbar } from './navbar'
 export { Footer } from './footer'
 export { SidebarNav } from './sidebar-nav'
+export { BreadcrumbNav } from './breadcrumb-nav'
+export { UserProfile } from './user-profile'
