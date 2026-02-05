@@ -70,6 +70,8 @@ export interface IssueReport {
   status: IssueStatus
   aggregation_status: AggregationStatus
   aggregated_issue_id?: string
+  // Automation/triage fields (from API response)
+  priority_score?: number
   // Populated fields for display
   category?: IssueCategory
   location?: Location
@@ -78,6 +80,13 @@ export interface IssueReport {
 // ============================================
 // Aggregated Issue Types (Admin-facing)
 // ============================================
+
+export interface PriorityBreakdown {
+  urgency_component: number
+  impact_component: number
+  frequency_component: number
+  environmental_component: number
+}
 
 export interface AggregatedIssue {
   id: string
@@ -97,6 +106,7 @@ export interface AggregatedIssue {
   location?: Location
   authority?: Authority
   linked_reports?: IssueReport[]
+  priority_breakdown?: PriorityBreakdown
 }
 
 // ============================================
