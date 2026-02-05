@@ -14,7 +14,11 @@ import {
   Zap,
   TrendingUp,
   FileText,
-  Building2
+  Building2,
+  Brain,
+  Megaphone,
+  Copy,
+  Bell
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -23,6 +27,9 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   Select,
   SelectContent,
@@ -30,48 +37,31 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@/components/ui/accordion'
 import { useAdminStore } from '@/stores'
 import { ISSUE_CATEGORIES, AUTHORITIES } from '@/lib/data/categories'
 import { CAMPUS_LOCATIONS } from '@/lib/data/locations'
 import { cn } from '@/lib/utils'
 import type { IssueStatus } from '@/types'
 
-const statusConfig: Record<IssueStatus, { label: string; icon: typeof Clock; className: string }> = {
-  open: { label: 'Open', icon: AlertCircle, className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
-  in_progress: { label: 'In Progress', icon: Clock, className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
-  resolved: { label: 'Resolved', icon: CheckCircle2, className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
+const statusConfig: Record<IssueStatus, { label: string; className: string }> = {
+  open: { label: 'Open', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
+  in_progress: { label: 'Investigating', className: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' },
+  resolved: { label: 'Resolved', className: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' },
 }
 
 function PageSkeleton() {
   return (
     <div className="space-y-6">
       <Skeleton className="h-8 w-32" />
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-6">
-          <Card>
-            <CardHeader>
-              <Skeleton className="h-6 w-3/4" />
-              <Skeleton className="h-4 w-1/2" />
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Skeleton className="h-32 w-full" />
-            </CardContent>
-          </Card>
-        </div>
-        <div className="space-y-6">
-          <Card>
-            <CardContent className="p-4 space-y-4">
-              <Skeleton className="h-24 w-full" />
-            </CardContent>
-          </Card>
-        </div>
-      </div>
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-6 w-3/4" />
+          <Skeleton className="h-4 w-1/2" />
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Skeleton className="h-32 w-full" />
+        </CardContent>
+      </Card>
     </div>
   )
 }
@@ -90,6 +80,57 @@ function getPriorityColor(score: number): string {
   return 'text-emerald-600'
 }
 
+function getPriorityBorderColor(score: number): string {
+  if (score >= 80) return 'border-red-500/30'
+  if (score >= 60) return 'border-orange-500/30'
+  if (score >= 40) return 'border-yellow-500/30'
+  return 'border-emerald-500/30'
+}
+
+function getPriorityStrokeColor(score: number): string {
+  if (score >= 80) return 'stroke-red-500'
+  if (score >= 60) return 'stroke-orange-500'
+  if (score >= 40) return 'stroke-yellow-500'
+  return 'stroke-emerald-500'
+}
+
+// Circular Progress Component
+function CircularProgress({ value, size = 64 }: { value: number; size?: number }) {
+  const strokeWidth = 4
+  const radius = (size - strokeWidth) / 2
+  const circumference = radius * 2 * Math.PI
+  const offset = circumference - (value / 100) * circumference
+
+  return (
+    <div className={cn("relative flex items-center justify-center", `w-${size/4} h-${size/4}`)} style={{ width: size, height: size }}>
+      <svg className="absolute transform -rotate-90" width={size} height={size}>
+        {/* Background circle */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          strokeWidth={strokeWidth}
+          className="stroke-muted"
+        />
+        {/* Progress circle */}
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          className={getPriorityStrokeColor(value)}
+        />
+      </svg>
+      <AlertCircle className={cn("h-5 w-5", getPriorityColor(value))} />
+    </div>
+  )
+}
+
 export default function AdminIssueDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -105,6 +146,9 @@ export default function AdminIssueDetailPage() {
 
   const [notes, setNotes] = useState('')
   const [newStatus, setNewStatus] = useState<IssueStatus | ''>('')
+  const [overridePriority, setOverridePriority] = useState<'low' | 'medium' | 'high' | null>(null)
+  const [overrideReason, setOverrideReason] = useState('')
+  const [sendNotification, setSendNotification] = useState(true)
 
   const issueId = params.id as string
 
@@ -131,7 +175,7 @@ export default function AdminIssueDetailPage() {
     const diffInHours = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60))
     
     if (diffInHours < 1) return 'Just now'
-    if (diffInHours < 24) return `${diffInHours}h ago`
+    if (diffInHours < 24) return `${diffInHours} hours ago`
     const diffInDays = Math.floor(diffInHours / 24)
     if (diffInDays === 1) return 'Yesterday'
     return `${diffInDays} days ago`
@@ -174,7 +218,6 @@ export default function AdminIssueDetailPage() {
   }
 
   const status = statusConfig[selectedIssue.status]
-  const StatusIcon = status.icon
   const category = ISSUE_CATEGORIES.find(c => c.id === selectedIssue.canonical_category_id)
   const location = CAMPUS_LOCATIONS.find(l => l.id === selectedIssue.location_id)
   const authority = AUTHORITIES.find(a => a.id === selectedIssue.authority_id)
@@ -187,240 +230,286 @@ export default function AdminIssueDetailPage() {
         Back to Dashboard
       </Button>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        {/* Main Content */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Issue Overview */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <CardTitle className="text-xl flex items-center gap-2">
-                    {category?.name || 'Unknown Category'}
-                    {category?.is_environmental && (
-                      <Badge variant="outline">Environmental</Badge>
-                    )}
-                  </CardTitle>
-                  <CardDescription className="mt-1">
-                    Issue ID: <span className="font-mono">{selectedIssue.id}</span>
-                  </CardDescription>
-                </div>
-                <Badge className={cn('flex-shrink-0', status.className)}>
-                  <StatusIcon className="mr-1 h-3 w-3" />
-                  {status.label}
+      {/* Issue Header Card */}
+      <Card className="shadow-sm">
+        <CardContent className="p-6">
+          <div className="flex flex-col md:flex-row justify-between items-start gap-4">
+            <div className="flex-1">
+              <div className="flex items-center gap-3 mb-2">
+                <Badge className={cn(
+                  "text-xs font-bold uppercase tracking-wide",
+                  selectedIssue.priority_score >= 80 
+                    ? "bg-red-500/10 text-red-600 border border-red-500/20"
+                    : selectedIssue.priority_score >= 60
+                    ? "bg-orange-500/10 text-orange-600 border border-orange-500/20"
+                    : "bg-yellow-500/10 text-yellow-600 border border-yellow-500/20"
+                )}>
+                  {getPriorityLabel(selectedIssue.priority_score)}
                 </Badge>
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  Reported {formatTimeAgo(selectedIssue.first_report_time)}
+                </span>
               </div>
+              <h1 className="text-2xl font-bold">
+                {category?.name} Issue at {location?.name}
+              </h1>
+              <p className="text-muted-foreground mt-1">
+                Multiple reports of issues affecting this area.
+              </p>
+              
+              {/* Tags */}
+              <div className="flex flex-wrap gap-2 mt-4">
+                <Badge variant="secondary">{category?.is_environmental ? 'Environmental' : 'Infrastructure'}</Badge>
+                <Badge variant="outline">{location?.name}</Badge>
+                {selectedIssue.total_reports > 10 && (
+                  <Badge variant="outline" className="text-red-600">High Volume</Badge>
+                )}
+              </div>
+            </div>
+
+            {/* Priority Score */}
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <div className="text-xs text-muted-foreground font-medium uppercase">Priority Score</div>
+                <div className="text-3xl font-bold">
+                  {selectedIssue.priority_score}
+                  <span className="text-lg text-muted-foreground font-normal">/100</span>
+                </div>
+              </div>
+              <CircularProgress value={selectedIssue.priority_score} size={64} />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Main Content - Left Column */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* AI Priority Analysis */}
+          <Card className="bg-blue-50 dark:bg-blue-900/10 border-blue-100 dark:border-blue-900/30">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center gap-2 text-base text-blue-800 dark:text-blue-300">
+                <Brain className="h-4 w-4" />
+                AI Priority Analysis
+              </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Key Metrics */}
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-lg border p-3">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <TrendingUp className="h-4 w-4" />
-                    <span className="text-xs">Priority Score</span>
-                  </div>
-                  <div className={cn("text-2xl font-bold mt-1", getPriorityColor(selectedIssue.priority_score))}>
-                    {selectedIssue.priority_score}
-                  </div>
-                  <Progress value={selectedIssue.priority_score} className="mt-2 h-1.5" />
-                </div>
-                <div className="rounded-lg border p-3">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Users className="h-4 w-4" />
-                    <span className="text-xs">Total Reports</span>
-                  </div>
-                  <div className="text-2xl font-bold mt-1">
-                    {selectedIssue.total_reports}
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-background p-3 rounded-lg border border-blue-100 dark:border-border shadow-sm">
+                  <div className="text-xs text-muted-foreground mb-1">Volume Spike</div>
+                  <div className="font-semibold text-sm">{selectedIssue.total_reports} reports in {formatTimeAgo(selectedIssue.first_report_time).replace(' ago', '')}</div>
+                  <div className="w-full bg-muted h-1.5 rounded-full mt-2">
+                    <div 
+                      className="bg-red-500 h-1.5 rounded-full" 
+                      style={{ width: `${Math.min(selectedIssue.total_reports * 5, 100)}%` }} 
+                    />
                   </div>
                 </div>
-                <div className="rounded-lg border p-3">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Zap className="h-4 w-4" />
-                    <span className="text-xs">Last 30 min</span>
-                  </div>
-                  <div className="text-2xl font-bold mt-1">
-                    {selectedIssue.frequency_30min}
+                <div className="bg-background p-3 rounded-lg border border-blue-100 dark:border-border shadow-sm">
+                  <div className="text-xs text-muted-foreground mb-1">Frequency Score</div>
+                  <div className="font-semibold text-sm">{selectedIssue.frequency_30min} reports in 30 min</div>
+                  <div className="w-full bg-muted h-1.5 rounded-full mt-2">
+                    <div 
+                      className="bg-amber-500 h-1.5 rounded-full" 
+                      style={{ width: `${Math.min(selectedIssue.frequency_30min * 10, 100)}%` }} 
+                    />
                   </div>
                 </div>
-                <div className="rounded-lg border p-3">
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Clock className="h-4 w-4" />
-                    <span className="text-xs">Last Report</span>
-                  </div>
-                  <div className="text-lg font-semibold mt-1">
-                    {formatTimeAgo(selectedIssue.latest_report_time)}
+                <div className="bg-background p-3 rounded-lg border border-blue-100 dark:border-border shadow-sm">
+                  <div className="text-xs text-muted-foreground mb-1">Location Density</div>
+                  <div className="font-semibold text-sm">Concentrated: {location?.name}</div>
+                  <div className="w-full bg-muted h-1.5 rounded-full mt-2">
+                    <div className="bg-blue-500 h-1.5 rounded-full" style={{ width: '60%' }} />
                   </div>
                 </div>
               </div>
-
-              <Separator />
-
-              {/* Issue Details */}
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                    <MapPin className="h-5 w-5 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Location</p>
-                    <p className="text-sm text-muted-foreground">
-                      {location?.name || 'Unknown'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                    <Building2 className="h-5 w-5 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Suggested Authority</p>
-                    <p className="text-sm text-muted-foreground">
-                      {authority?.name || 'Not Assigned'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                    <Calendar className="h-5 w-5 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">First Reported</p>
-                    <p className="text-sm text-muted-foreground">
-                      {formatDate(selectedIssue.first_report_time)}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                    <Tag className="h-5 w-5 text-muted-foreground" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium">Priority Level</p>
-                    <p className={cn("text-sm font-medium", getPriorityColor(selectedIssue.priority_score))}>
-                      {getPriorityLabel(selectedIssue.priority_score)}
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <p className="text-xs text-blue-700 dark:text-blue-400 mt-3 leading-relaxed">
+                <span className="font-semibold">Reasoning:</span> The rapid influx of reports combined with the environmental nature of this issue triggered a &quot;{getPriorityLabel(selectedIssue.priority_score)}&quot; classification. Pattern matching suggests concentrated impact in {location?.name}.
+              </p>
             </CardContent>
           </Card>
 
           {/* Linked Reports */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Linked Reports ({selectedIssue.linked_reports?.length || 0})</CardTitle>
-              <CardDescription>
-                Individual student reports aggregated into this issue
-              </CardDescription>
+          <Card className="shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-base">Linked Student Reports ({selectedIssue.linked_reports?.length || 0})</CardTitle>
+                <CardDescription>Individual reports aggregated into this issue</CardDescription>
+              </div>
+              <Button variant="link" size="sm" className="text-primary">
+                View All
+              </Button>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-0">
               {selectedIssue.linked_reports && selectedIssue.linked_reports.length > 0 ? (
-                <Accordion type="single" collapsible className="w-full">
-                  {selectedIssue.linked_reports.map((report, index) => (
-                    <AccordionItem key={report.id} value={report.id}>
-                      <AccordionTrigger className="hover:no-underline">
-                        <div className="flex items-center gap-3 text-left">
-                          <span className="flex h-6 w-6 items-center justify-center rounded-full bg-muted text-xs font-medium">
-                            {index + 1}
-                          </span>
-                          <div>
-                            <p className="font-medium truncate max-w-[300px]">{report.title}</p>
+                <div className="divide-y">
+                  {selectedIssue.linked_reports.slice(0, 5).map((report, index) => (
+                    <div 
+                      key={report.id} 
+                      className="p-4 hover:bg-muted/30 transition-colors cursor-pointer group"
+                    >
+                      <div className="flex items-start gap-4">
+                        <Avatar className="h-10 w-10">
+                          <AvatarFallback className="bg-muted text-xs font-bold">
+                            {report.title.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase()}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-1">
+                            <p className="text-sm font-medium truncate">
+                              Anonymous Student
+                              <span className="text-muted-foreground font-normal ml-2">
+                                ID: {report.id.slice(0, 8)}
+                              </span>
+                            </p>
                             <p className="text-xs text-muted-foreground">
                               {formatTimeAgo(report.created_at)}
                             </p>
                           </div>
+                          <p className="text-sm text-muted-foreground line-clamp-2">
+                            {report.description}
+                          </p>
                         </div>
-                      </AccordionTrigger>
-                      <AccordionContent>
-                        <div className="pl-9 space-y-2">
-                          <p className="text-sm text-muted-foreground">{report.description}</p>
-                          <div className="flex gap-2 text-xs text-muted-foreground">
-                            <span>{report.location?.name}</span>
-                            <span>•</span>
-                            <span>{report.category?.name}</span>
-                          </div>
-                        </div>
-                      </AccordionContent>
-                    </AccordionItem>
+                      </div>
+                    </div>
                   ))}
-                </Accordion>
+                </div>
               ) : (
-                <p className="text-sm text-muted-foreground">No linked reports available.</p>
+                <div className="p-8 text-center">
+                  <p className="text-sm text-muted-foreground">No linked reports available.</p>
+                </div>
               )}
             </CardContent>
           </Card>
         </div>
 
-        {/* Sidebar - Actions */}
+        {/* Sidebar - Right Column */}
         <div className="space-y-6">
-          {/* Status Update Card */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Update Status</CardTitle>
-              <CardDescription>
-                Change the issue status and add notes
-              </CardDescription>
+          {/* Admin Actions Card */}
+          <Card className="shadow-lg sticky top-24">
+            <CardHeader className="bg-muted/50 rounded-t-lg">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Building2 className="h-4 w-4 text-primary" />
+                Admin Actions
+              </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">New Status</label>
-                <Select value={newStatus} onValueChange={(v) => setNewStatus(v as IssueStatus)}>
+            <CardContent className="p-5 space-y-6">
+              {/* Current Status */}
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-2">
+                  Current Status
+                </label>
+                <Select value={newStatus || selectedIssue.status} onValueChange={(v) => setNewStatus(v as IssueStatus)}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Select status" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="open">Open</SelectItem>
-                    <SelectItem value="in_progress">In Progress</SelectItem>
+                    <SelectItem value="open">Open (Unassigned)</SelectItem>
+                    <SelectItem value="in_progress">Investigating</SelectItem>
                     <SelectItem value="resolved">Resolved</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Notes (optional)</label>
-                <Textarea
-                  placeholder="Add any notes about this status change..."
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={3}
+
+              {/* Assign Authority */}
+              <div>
+                <label className="block text-xs font-semibold text-muted-foreground uppercase mb-2">
+                  Assign Authority
+                </label>
+                <div className="relative">
+                  <Building2 className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input 
+                    className="pl-10" 
+                    value={authority?.name || ''} 
+                    placeholder="Select authority..."
+                    readOnly
+                  />
+                  <Button 
+                    variant="secondary" 
+                    size="sm" 
+                    className="absolute right-1 top-1 h-7"
+                  >
+                    Change
+                  </Button>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Override Priority */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold text-muted-foreground uppercase">
+                    Override Priority
+                  </label>
+                  <span className="text-xs text-muted-foreground">
+                    Current: {getPriorityLabel(selectedIssue.priority_score)}
+                  </span>
+                </div>
+                <div className="flex gap-2 mb-3">
+                  {(['low', 'medium', 'high'] as const).map((level) => (
+                    <Button
+                      key={level}
+                      variant={overridePriority === level ? 'default' : 'outline'}
+                      size="sm"
+                      className={cn(
+                        "flex-1 capitalize",
+                        overridePriority === level && level === 'high' && "bg-red-500 hover:bg-red-600"
+                      )}
+                      onClick={() => setOverridePriority(overridePriority === level ? null : level)}
+                    >
+                      {level}
+                    </Button>
+                  ))}
+                </div>
+                <Textarea 
+                  placeholder="Reason for override..."
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  className="resize-none h-20"
                 />
               </div>
-              <Button 
-                className="w-full" 
-                onClick={handleStatusUpdate}
-                disabled={!newStatus || isActionLoading}
-              >
-                {isActionLoading ? 'Updating...' : 'Update Status'}
-              </Button>
+
+              {/* Action Buttons */}
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <Button variant="outline" className="gap-2">
+                  <Copy className="h-4 w-4" />
+                  Mark Duplicate
+                </Button>
+                <Button 
+                  className="shadow-md"
+                  onClick={handleStatusUpdate}
+                  disabled={isActionLoading}
+                >
+                  {isActionLoading ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
-          {/* Action History */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Action History</CardTitle>
+          {/* Broadcast Update Card */}
+          <Card className="shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="flex items-center justify-between text-sm">
+                Broadcast Update
+                <Megaphone className="h-4 w-4 text-muted-foreground" />
+              </CardTitle>
             </CardHeader>
-            <CardContent>
-              {issueActions.length > 0 ? (
-                <div className="space-y-4">
-                  {issueActions.map((action) => (
-                    <div key={action.id} className="border-l-2 border-muted pl-4">
-                      <p className="text-sm font-medium capitalize">
-                        {action.action_type.replace('_', ' ')}
-                      </p>
-                      {action.notes && (
-                        <p className="text-sm text-muted-foreground mt-1">
-                          {action.notes}
-                        </p>
-                      )}
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {formatDate(action.created_at)}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">No actions yet.</p>
-              )}
+            <CardContent className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Notify all {selectedIssue.total_reports} reporting students of status change.
+              </p>
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <Checkbox 
+                  checked={sendNotification}
+                  onCheckedChange={(checked) => setSendNotification(!!checked)}
+                />
+                Send push notification
+              </label>
+              <Button variant="secondary" className="w-full">
+                Compose Message
+              </Button>
             </CardContent>
           </Card>
         </div>
