@@ -114,9 +114,11 @@ export async function runAutomationPipeline(
         const reportCount = await getReportCount(aggregationResult.aggregated_issue_id);
         const priorityBreakdown = calculatePriority({
             urgency_score: analysisResult.urgency_score,
+            impact_scope: analysisResult.impact_scope,
             is_environmental: category?.is_environmental || analysisResult.environmental_flag,
             report_count: reportCount,
             reports_last_30_min: frequencyMetric.report_count,
+            confidence_score: analysisResult.confidence_score,
         });
         console.log(`[Automation] Priority calculated:`, priorityBreakdown);
 
@@ -184,11 +186,13 @@ export async function runAutomationPipeline(
                 confidence_score: 0,
             },
             priority: {
-                urgency_component: 12.5,
-                impact_component: 0,
-                frequency_component: 0,
+                urgency_component: 17.5,
+                impact_component: 12,
+                frequency_component: 2.5,
                 environmental_component: 0,
-                total_score: 12.5,
+                raw_score: 32,
+                confidence_multiplier: 0,
+                total_score: 0,
             },
             routing: {
                 authority_id: '',
@@ -238,7 +242,9 @@ export async function recalculatePriority(aggregatedIssueId: string): Promise<Pr
       ),
       automation_metadata:issue_report_id (
         urgency_score,
-        environmental_flag
+        impact_scope,
+        environmental_flag,
+        confidence_score
       )
     `)
         .eq('aggregated_issue_id', aggregatedIssueId);
@@ -256,6 +262,18 @@ export async function recalculatePriority(aggregatedIssueId: string): Promise<Pr
         ? urgencyScores.reduce((a: number, b: number) => a + b, 0) / urgencyScores.length
         : 0.5;
 
+    // Calculate average confidence score
+    const confidenceScores = linkedReports
+        .filter((r: any) => r.automation_metadata?.confidence_score != null)
+        .map((r: any) => r.automation_metadata.confidence_score);
+
+    const avgConfidence = confidenceScores.length > 0
+        ? confidenceScores.reduce((a: number, b: number) => a + b, 0) / confidenceScores.length
+        : 0.5;
+
+    // Determine overall impact scope (multi if any report is multi)
+    const hasMultiImpact = linkedReports.some((r: any) => r.automation_metadata?.impact_scope === 'multi');
+
     // Check if any report flagged as environmental
     const isEnvironmental = linkedReports.some((r: any) => r.automation_metadata?.environmental_flag);
 
@@ -272,9 +290,11 @@ export async function recalculatePriority(aggregatedIssueId: string): Promise<Pr
     // Calculate new priority
     const priorityBreakdown = calculatePriority({
         urgency_score: avgUrgency,
+        impact_scope: hasMultiImpact ? 'multi' : 'single',
         is_environmental: isEnvironmental,
         report_count: reportCount,
         reports_last_30_min: frequencyMetric?.report_count || 0,
+        confidence_score: avgConfidence,
     });
 
     // Store new priority snapshot
