@@ -1,19 +1,17 @@
 /**
  * POST /api/issues/create
  * Student submits a new issue report
+ * Uses complete automation pipeline with Gemini AI
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireStudent } from '@/lib/auth';
 import { supabaseAdmin, Tables } from '@/lib/db';
-import { aggregateIssue } from '@/domain/aggregation';
-import { updateFrequencyMetrics } from '@/domain/frequency';
-import { calculatePriority } from '@/domain/priority';
+import { runAutomationPipeline } from '@/domain/automation';
 import type {
     CreateIssueRequest,
     CreateIssueResponse,
-    ApiResponse,
-    AutomationMetadata
+    ApiResponse
 } from '@/domain/types';
 
 // Validation constants
@@ -75,6 +73,34 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
             );
         }
 
+        // Validate category exists
+        const { data: category, error: categoryError } = await supabaseAdmin
+            .from(Tables.ISSUE_CATEGORIES)
+            .select('id')
+            .eq('id', category_id)
+            .single();
+
+        if (categoryError || !category) {
+            return NextResponse.json(
+                { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid category' } },
+                { status: 400 }
+            );
+        }
+
+        // Validate location exists
+        const { data: location, error: locationError } = await supabaseAdmin
+            .from(Tables.LOCATIONS)
+            .select('id')
+            .eq('id', location_id)
+            .single();
+
+        if (locationError || !location) {
+            return NextResponse.json(
+                { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid location' } },
+                { status: 400 }
+            );
+        }
+
         // Step 1: Insert issue report (immutable)
         const { data: issueReport, error: insertError } = await supabaseAdmin
             .from(Tables.ISSUE_REPORTS)
@@ -96,55 +122,37 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
             );
         }
 
-        // Step 2: Run automation triage (TODO: Integrate Gemini)
-        // For now, use placeholder automation metadata
-        const automationResult = await runTriagePipeline(issueReport.id, title, description, category_id);
-
-        // Step 3: Aggregate issue (find or create parent issue)
-        const aggregationResult = await aggregateIssue(
+        // Step 2: Run complete automation pipeline (with Gemini AI)
+        const automationResult = await runAutomationPipeline(
             issueReport.id,
+            title,
+            description,
             category_id,
             location_id
         );
 
-        // Step 4: Update frequency metrics
-        const frequencyMetric = await updateFrequencyMetrics(aggregationResult.aggregated_issue_id);
+        // Step 3: Return response
+        if (!automationResult.success) {
+            // Automation failed but issue was created - return partial success
+            console.warn('Automation pipeline failed but issue created:', automationResult.error);
+            return NextResponse.json({
+                success: true,
+                data: {
+                    issue_id: issueReport.id,
+                    aggregated_issue_id: automationResult.aggregated_issue_id || 'pending',
+                    aggregation_status: 'new',
+                    initial_priority: automationResult.priority.total_score,
+                },
+            }, { status: 201 });
+        }
 
-        // Step 5: Get category environmental flag
-        const { data: category } = await supabaseAdmin
-            .from(Tables.ISSUE_CATEGORIES)
-            .select('is_environmental')
-            .eq('id', category_id)
-            .single();
-
-        // Step 6: Calculate and store priority
-        const priorityBreakdown = calculatePriority({
-            urgency_score: automationResult?.urgency_score ?? 0.5,
-            is_environmental: category?.is_environmental ?? false,
-            report_count: frequencyMetric.report_count,
-            reports_last_30_min: frequencyMetric.report_count,
-        });
-
-        // Store priority snapshot
-        await supabaseAdmin
-            .from(Tables.PRIORITY_SNAPSHOTS)
-            .insert({
-                aggregated_issue_id: aggregationResult.aggregated_issue_id,
-                priority_score: priorityBreakdown.total_score,
-                urgency_component: priorityBreakdown.urgency_component,
-                impact_component: priorityBreakdown.impact_component,
-                frequency_component: priorityBreakdown.frequency_component,
-                environmental_component: priorityBreakdown.environmental_component,
-            });
-
-        // Return success response
         return NextResponse.json({
             success: true,
             data: {
                 issue_id: issueReport.id,
-                aggregated_issue_id: aggregationResult.aggregated_issue_id,
-                aggregation_status: aggregationResult.is_new ? 'new' : 'linked',
-                initial_priority: priorityBreakdown.total_score,
+                aggregated_issue_id: automationResult.aggregated_issue_id,
+                aggregation_status: automationResult.aggregation_status,
+                initial_priority: automationResult.priority.total_score,
             },
         }, { status: 201 });
 
@@ -154,49 +162,5 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
             { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } },
             { status: 500 }
         );
-    }
-}
-
-/**
- * Run the triage pipeline (placeholder until Gemini integration)
- * TODO: Replace with actual Gemini API call in automation phase
- */
-async function runTriagePipeline(
-    issueReportId: string,
-    title: string,
-    description: string,
-    categoryId: string
-): Promise<AutomationMetadata | null> {
-    try {
-        // Placeholder automation metadata
-        // Will be replaced with actual Gemini integration
-        const automationData = {
-            issue_report_id: issueReportId,
-            extracted_category: 'pending', // Will be extracted by Gemini
-            urgency_score: 0.5, // Default medium urgency
-            impact_scope: 'single' as const,
-            environmental_flag: false,
-            confidence_score: 0.0, // Zero confidence until Gemini runs
-            raw_model_output: {
-                placeholder: true,
-                note: 'Awaiting Gemini integration',
-            },
-        };
-
-        const { data, error } = await supabaseAdmin
-            .from(Tables.AUTOMATION_METADATA)
-            .insert(automationData)
-            .select()
-            .single();
-
-        if (error) {
-            console.error('Failed to store automation metadata:', error);
-            return null;
-        }
-
-        return data as AutomationMetadata;
-    } catch (error) {
-        console.error('Triage pipeline error:', error);
-        return null;
     }
 }
