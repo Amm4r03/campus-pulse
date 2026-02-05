@@ -10,6 +10,8 @@ interface NavItem {
   label: string
   icon: LucideIcon
   badge?: string | number
+  /** When true, badge uses muted styling (e.g. for spam count) */
+  badgeMuted?: boolean
 }
 
 interface NavGroup {
@@ -45,8 +47,15 @@ export function SidebarNav({ items, groups, collapsed = false }: SidebarNavProps
         {!collapsed && (
           <>
             <span className="flex-1">{item.label}</span>
-            {item.badge && (
-              <span className="ml-auto bg-destructive/10 text-destructive text-xs font-bold px-2 py-0.5 rounded-full">
+            {item.badge != null && item.badge !== '' && (
+              <span
+                className={cn(
+                  'ml-auto text-xs font-medium px-2 py-0.5 rounded-full',
+                  item.badgeMuted
+                    ? 'bg-muted text-muted-foreground'
+                    : 'bg-destructive/10 text-destructive font-bold'
+                )}
+              >
                 {item.badge}
               </span>
             )}
