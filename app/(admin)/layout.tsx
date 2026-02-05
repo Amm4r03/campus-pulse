@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { 
   LayoutDashboard, 
   LogOut,
@@ -14,27 +14,20 @@ import {
   Search,
   FileText,
   BarChart3,
-  Users
+  Users,
+  ShieldAlert
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { SidebarNav, BreadcrumbNav, UserProfile } from '@/components/layout'
-import { useAuthStore, useUIStore } from '@/stores'
+import { useAuthStore, useUIStore, useAdminStore } from '@/stores'
 import { cn } from '@/lib/utils'
 
-const adminNavGroups = [
-  {
-    label: 'Main Menu',
-    items: [
-      { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
-      { href: '/dashboard/issues', label: 'Issues', icon: FileText, badge: 12 },
-    ],
-  },
-  {
-    label: 'Management',
-    items: [
-      { href: '/settings', label: 'Settings', icon: Settings },
-    ],
-  },
+const baseNavItems = [
+  { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
+  { href: '/dashboard/issues', label: 'Issues', icon: FileText },
+]
+const managementItems = [
+  { href: '/settings', label: 'Settings', icon: Settings },
 ]
 
 export default function AdminLayout({
@@ -45,6 +38,36 @@ export default function AdminLayout({
   const router = useRouter()
   const { isAuthenticated, role, logout } = useAuthStore()
   const { sidebarOpen, setSidebarOpen } = useUIStore()
+  const reportCount = useAdminStore((s) => s.reportCount)
+  const spamCount = useAdminStore((s) => s.spamCount)
+  const fetchReportCount = useAdminStore((s) => s.fetchReportCount)
+  const fetchSpamCount = useAdminStore((s) => s.fetchSpamCount)
+
+  const adminNavGroups = useMemo(
+    () => [
+      {
+        label: 'Main Menu',
+        items: [
+          ...baseNavItems.slice(0, 1),
+          { ...baseNavItems[1], badge: reportCount > 0 ? reportCount : undefined },
+          {
+            href: '/dashboard/spam',
+            label: 'Spam',
+            icon: ShieldAlert,
+            badge: spamCount > 0 ? spamCount : undefined,
+            badgeMuted: true,
+          },
+        ],
+      },
+      { label: 'Management', items: managementItems },
+    ],
+    [reportCount, spamCount]
+  )
+
+  useEffect(() => {
+    fetchReportCount()
+    fetchSpamCount()
+  }, [fetchReportCount, fetchSpamCount])
 
   // Redirect if not authenticated or not an admin
   useEffect(() => {
