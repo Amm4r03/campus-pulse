@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import {
   Filter,
@@ -42,6 +42,7 @@ import {
 } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAdminStore } from '@/stores'
+import { useApiOptions } from '@/hooks/use-api-options'
 import { cn } from '@/lib/utils'
 
 interface ReportRow {
@@ -74,7 +75,6 @@ function TableSkeleton() {
 const ITEMS_PER_PAGE = 15
 
 export default function AdminIssuesPage() {
-  const { fetchReportCount } = useAdminStore()
   const [reports, setReports] = useState<ReportRow[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [isLoading, setIsLoading] = useState(true)
@@ -84,10 +84,9 @@ export default function AdminIssuesPage() {
   const [locationId, setLocationId] = useState<string>('all')
   const [sort, setSort] = useState<'created_at' | 'title'>('created_at')
   const [order, setOrder] = useState<'asc' | 'desc'>('desc')
-  const [apiCategories, setApiCategories] = useState<Array<{ id: string; name: string }>>([])
-  const [apiLocations, setApiLocations] = useState<Array<{ id: string; name: string }>>([])
+  const { apiCategories, apiLocations } = useApiOptions()
 
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     setIsLoading(true)
     try {
       const params = new URLSearchParams()
@@ -112,25 +111,11 @@ export default function AdminIssuesPage() {
     } finally {
       setIsLoading(false)
     }
-  }
-
-  useEffect(() => {
-    fetchReports()
   }, [currentPage, categoryId, locationId, sort, order])
 
   useEffect(() => {
-    fetchReportCount()
-  }, [fetchReportCount, reports.length])
-
-  useEffect(() => {
-    Promise.all([
-      fetch('/api/categories').then((r) => r.json()),
-      fetch('/api/locations').then((r) => r.json()),
-    ]).then(([catRes, locRes]) => {
-      if (catRes.success && catRes.data) setApiCategories(catRes.data)
-      if (locRes.success && locRes.data) setApiLocations(locRes.data)
-    })
-  }, [])
+    fetchReports()
+  }, [fetchReports])
 
   const formatDate = (dateString: string) => {
     const d = new Date(dateString)

@@ -52,6 +52,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover'
 import { useAdminStore } from '@/stores'
+import { useApiOptions } from '@/hooks/use-api-options'
 import { cn } from '@/lib/utils'
 import type { IssueStatus } from '@/types'
 import { ResolveIssueModal } from '@/components/resolve-issue-modal'
@@ -165,9 +166,7 @@ export default function AdminDashboardPage() {
   const [assignModalIssueId, setAssignModalIssueId] = useState<string | null>(null)
   /** 'active' = open + in_progress, 'resolved' = recently resolved tab */
   const [issuesTab, setIssuesTab] = useState<'active' | 'resolved'>('active')
-  // Options for filter dropdowns (from API so IDs match DB)
-  const [apiCategories, setApiCategories] = useState<Array<{ id: string; name: string }>>([])
-  const [apiLocations, setApiLocations] = useState<Array<{ id: string; name: string }>>([])
+  const { apiCategories, apiLocations } = useApiOptions()
 
   // Fetch issues for current tab (active = open+in_progress, resolved = resolved); counts from DB
   useEffect(() => {
@@ -178,17 +177,6 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     fetchResolvedStats()
   }, [fetchResolvedStats])
-
-  // Load categories and locations for filter dropdowns
-  useEffect(() => {
-    Promise.all([
-      fetch('/api/categories').then((r) => r.json()),
-      fetch('/api/locations').then((r) => r.json()),
-    ]).then(([catRes, locRes]) => {
-      if (catRes.success && catRes.data) setApiCategories(catRes.data)
-      if (locRes.success && locRes.data) setApiLocations(locRes.data)
-    })
-  }, [])
 
   const formatTimeAgo = (dateString: string) => {
     const date = new Date(dateString)
