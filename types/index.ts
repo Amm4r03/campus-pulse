@@ -11,22 +11,16 @@ export interface User {
 }
 
 // ============================================
-// Location Types
+// Location Types (aligned with domain & DB schema)
 // ============================================
 
-export type LocationType = 
-  | 'hostel' 
-  | 'academic' 
-  | 'library' 
-  | 'sports' 
-  | 'hospital' 
-  | 'canteen' 
-  | 'other'
+import type { LocationType as DomainLocationType } from '@/domain/types'
+export type LocationType = DomainLocationType
 
 export interface Location {
   id: string
   name: string
-  type: LocationType
+  type: DomainLocationType
   is_active: boolean
 }
 
@@ -72,6 +66,8 @@ export interface IssueReport {
   aggregated_issue_id?: string
   // Automation/triage fields (from API response)
   priority_score?: number
+  urgency_level?: string
+  requires_immediate_action?: boolean
   // Populated fields for display
   category?: IssueCategory
   location?: Location
@@ -118,7 +114,7 @@ export interface AutomationMetadata {
   issue_report_id: string
   extracted_category: string
   urgency_score: number
-  impact_scope: 'single' | 'multiple'
+  impact_scope: 'single' | 'multi'
   environmental_flag: boolean
   confidence_score: number
   created_at: string
@@ -173,9 +169,13 @@ export interface AdminAction {
 // ============================================
 
 export interface AdminFilters {
-  status: IssueStatus | 'all'
+  /** 'open,in_progress' = active issues only (for Active tab) */
+  status: IssueStatus | 'all' | 'open,in_progress'
   category_id: string | 'all'
   location_id: string | 'all'
+  /** Used for API filtering (view has category_name, not id) */
+  category_name: string | 'all'
+  location_name: string | 'all'
   date_range: {
     start: string | null
     end: string | null

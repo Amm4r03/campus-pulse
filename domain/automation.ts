@@ -4,7 +4,8 @@
  */
 
 import { supabaseAdmin, Tables } from '@/lib/db';
-import { analyzeIssue } from '@/lib/gemini';
+import { runRobustTriage } from '@/lib/triage/orchestrator';
+import { MODEL_NAME as GEMINI_MODEL_NAME } from '@/lib/gemini';
 import { aggregateIssue, getReportCount } from './aggregation';
 import { updateFrequencyMetrics } from './frequency';
 import { calculatePriority } from './priority';
@@ -31,6 +32,10 @@ export interface AutomationPipelineResult {
         impact_scope: 'single' | 'multi';
         environmental_flag: boolean;
         confidence_score: number;
+        urgency_level?: string;
+        requires_immediate_action?: boolean;
+        report_type?: string;
+        spam_confidence?: number;
     };
     priority: PriorityBreakdown;
     routing: {
@@ -38,6 +43,17 @@ export interface AutomationPipelineResult {
         authority_name: string;
     };
     error?: string;
+}
+
+export interface AutomationProgressEvent {
+    stage: string;
+    progress: number;
+    message: string;
+    data?: unknown;
+}
+
+export interface RunAutomationPipelineOptions {
+    onProgress?: (event: AutomationProgressEvent) => void;
 }
 
 /**
@@ -49,15 +65,57 @@ export async function runAutomationPipeline(
     title: string,
     description: string,
     categoryId: string,
-    locationId: string
+    locationId: string,
+    options?: RunAutomationPipelineOptions
 ): Promise<AutomationPipelineResult> {
+    const onProgress = options?.onProgress;
     try {
-        // Step 1: Run Gemini analysis
-        console.log(`[Automation] Starting analysis for issue ${issueReportId}`);
-        const analysisResult = await analyzeIssue(title, description);
-        console.log(`[Automation] Gemini analysis complete:`, analysisResult);
+        onProgress?.({ stage: 'triage', progress: 15, message: 'Running safety checks...' });
+        // Step 1: Fetch categories and locations for parallel triage
+        const [categoriesRes, locationsRes] = await Promise.all([
+            supabaseAdmin.from(Tables.ISSUE_CATEGORIES).select('id, name'),
+            supabaseAdmin.from(Tables.LOCATIONS).select('id, name'),
+        ]);
+        const availableCategories = (categoriesRes.data ?? []).map((r) => ({ id: r.id, name: r.name }));
+        const availableLocations = (locationsRes.data ?? []).map((r) => ({ id: r.id, name: r.name }));
 
-        // Step 2: Store automation metadata
+        // Step 2: Run parallel triage (spam + location + urgency in parallel, ~700–1200ms)
+        console.log(`[Automation] Starting parallel triage for issue ${issueReportId}`);
+        const triageResult = await runRobustTriage({
+            title,
+            description,
+            availableLocations,
+            availableCategories,
+        });
+        const analysisResult = triageResult.automationOutput;
+        console.log(`[Automation] Parallel triage complete:`, {
+            urgency: analysisResult.urgency_score,
+            category: analysisResult.extracted_category,
+            fullAnalysisNeeded: triageResult.fullAnalysisNeeded,
+        });
+        onProgress?.({
+            stage: 'triage_complete',
+            progress: 40,
+            message: `Analysis: ${analysisResult.urgency_level ?? 'MEDIUM'} priority`,
+            data: {
+                urgency_level: analysisResult.urgency_level,
+                requires_immediate_action: analysisResult.requires_immediate_action,
+            },
+        });
+
+        // Step 3: Store automation metadata (including safety/escalation dimensions in raw_model_output)
+        const rawModelOutput: Record<string, unknown> = {
+            reasoning: analysisResult.reasoning,
+            model: 'parallel-triage',
+            gemini_model: GEMINI_MODEL_NAME,
+            timestamp: new Date().toISOString(),
+            urgency_level: analysisResult.urgency_level,
+            report_type: analysisResult.report_type,
+            reporter_welfare_flag: analysisResult.reporter_welfare_flag,
+            requires_immediate_action: analysisResult.requires_immediate_action,
+            spam_confidence: analysisResult.spam_confidence,
+            context_validity: analysisResult.context_validity,
+        };
         const { data: automationMetadata, error: metadataError } = await supabaseAdmin
             .from(Tables.AUTOMATION_METADATA)
             .upsert({
@@ -67,11 +125,7 @@ export async function runAutomationPipeline(
                 impact_scope: analysisResult.impact_scope,
                 environmental_flag: analysisResult.environmental_flag,
                 confidence_score: analysisResult.confidence_score,
-                raw_model_output: {
-                    reasoning: analysisResult.reasoning,
-                    model: 'gemini-1.5-flash',
-                    timestamp: new Date().toISOString(),
-                },
+                raw_model_output: rawModelOutput,
             }, {
                 onConflict: 'issue_report_id',
             })
@@ -83,6 +137,7 @@ export async function runAutomationPipeline(
             throw new Error(`Failed to store automation metadata: ${metadataError.message}`);
         }
 
+        onProgress?.({ stage: 'aggregating', progress: 55, message: 'Checking for similar issues...' });
         // Step 3: Aggregate issue (find or create parent)
         console.log(`[Automation] Aggregating issue...`);
         const aggregationResult = await aggregateIssue(
@@ -110,7 +165,8 @@ export async function runAutomationPipeline(
             .eq('id', locationId)
             .single();
 
-        // Step 7: Calculate priority
+        onProgress?.({ stage: 'priority', progress: 70, message: 'Calculating priority score...' });
+        // Step 7: Calculate priority (with single-report escalation and welfare boost)
         const reportCount = await getReportCount(aggregationResult.aggregated_issue_id);
         const priorityBreakdown = calculatePriority({
             urgency_score: analysisResult.urgency_score,
@@ -119,11 +175,19 @@ export async function runAutomationPipeline(
             report_count: reportCount,
             reports_last_30_min: frequencyMetric.report_count,
             confidence_score: analysisResult.confidence_score,
+            requires_immediate_action: analysisResult.requires_immediate_action,
+            reporter_welfare_flag: analysisResult.reporter_welfare_flag,
         });
+        if (analysisResult.requires_immediate_action) {
+            console.warn('[Automation] Immediate action required for report', issueReportId, {
+                urgency_level: analysisResult.urgency_level,
+                reporter_welfare_flag: analysisResult.reporter_welfare_flag,
+            });
+        }
         console.log(`[Automation] Priority calculated:`, priorityBreakdown);
 
-        // Step 8: Store priority snapshot
-        await supabaseAdmin
+        // Step 8: Store priority snapshot (non-critical for main flow; log and continue on failure)
+        const { error: snapshotError } = await supabaseAdmin
             .from(Tables.PRIORITY_SNAPSHOTS)
             .insert({
                 aggregated_issue_id: aggregationResult.aggregated_issue_id,
@@ -132,7 +196,12 @@ export async function runAutomationPipeline(
                 impact_component: priorityBreakdown.impact_component,
                 frequency_component: priorityBreakdown.frequency_component,
                 environmental_component: priorityBreakdown.environmental_component,
-            });
+            })
+            .select();
+
+        if (snapshotError) {
+            console.error('[Automation] Failed to store priority snapshot:', snapshotError);
+        }
 
         // Step 9: Get routing recommendation
         const routingResult = await routeIssue({
@@ -149,6 +218,12 @@ export async function runAutomationPipeline(
         }
 
         console.log(`[Automation] Pipeline complete for issue ${issueReportId}`);
+        onProgress?.({
+            stage: 'complete',
+            progress: 100,
+            message: 'Report submitted successfully',
+            data: undefined,
+        });
 
         return {
             success: true,
@@ -161,6 +236,10 @@ export async function runAutomationPipeline(
                 impact_scope: analysisResult.impact_scope,
                 environmental_flag: analysisResult.environmental_flag,
                 confidence_score: analysisResult.confidence_score,
+                urgency_level: analysisResult.urgency_level,
+                requires_immediate_action: analysisResult.requires_immediate_action,
+                report_type: analysisResult.report_type,
+                spam_confidence: analysisResult.spam_confidence,
             },
             priority: priorityBreakdown,
             routing: {
@@ -184,6 +263,8 @@ export async function runAutomationPipeline(
                 impact_scope: 'single',
                 environmental_flag: false,
                 confidence_score: 0,
+                report_type: 'GENERAL',
+                spam_confidence: 0,
             },
             priority: {
                 urgency_component: 17.5,
@@ -297,8 +378,8 @@ export async function recalculatePriority(aggregatedIssueId: string): Promise<Pr
         confidence_score: avgConfidence,
     });
 
-    // Store new priority snapshot
-    await supabaseAdmin
+    // Store new priority snapshot (log and continue on failure)
+    const { error: snapshotError } = await supabaseAdmin
         .from(Tables.PRIORITY_SNAPSHOTS)
         .insert({
             aggregated_issue_id: aggregatedIssueId,
@@ -307,7 +388,12 @@ export async function recalculatePriority(aggregatedIssueId: string): Promise<Pr
             impact_component: priorityBreakdown.impact_component,
             frequency_component: priorityBreakdown.frequency_component,
             environmental_component: priorityBreakdown.environmental_component,
-        });
+        })
+        .select();
+
+    if (snapshotError) {
+        console.error('[Automation] Failed to store priority snapshot in recalculatePriority:', snapshotError);
+    }
 
     return priorityBreakdown;
 }

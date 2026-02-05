@@ -4,6 +4,7 @@ import { z } from 'zod'
 // Issue Submission Form
 // ============================================
 
+/** Strict schema: all fields required, used when validating final payload before create API. */
 export const issueFormSchema = z.object({
   title: z
     .string()
@@ -11,7 +12,7 @@ export const issueFormSchema = z.object({
     .max(100, 'Title must be less than 100 characters'),
   description: z
     .string()
-    .min(50, 'Please provide more detail (at least 50 characters)')
+    .min(20, 'Please provide at least 20 characters (or answer the follow-up questions)')
     .max(2000, 'Description must be less than 2000 characters'),
   category_id: z
     .string()
@@ -22,6 +23,31 @@ export const issueFormSchema = z.object({
 })
 
 export type IssueFormData = z.infer<typeof issueFormSchema>
+
+/**
+ * Soft schema for the submit page: minimal input to start the flow.
+ * Category, location, and long description are optional; smart-check will ask follow-up questions.
+ * Use this so users can submit with just a title (and optional short description).
+ */
+export const issueFormSchemaSoft = z.object({
+  title: z
+    .string()
+    .min(3, 'Title must be at least 3 characters')
+    .max(100, 'Title must be less than 100 characters'),
+  description: z
+    .string()
+    .max(2000, 'Description must be less than 2000 characters')
+    .optional()
+    .default(''),
+  category_id: z
+    .string()
+    .optional()
+    .default(''),
+  location_id: z
+    .string()
+    .optional()
+    .default(''),
+})
 
 // ============================================
 // Login Form

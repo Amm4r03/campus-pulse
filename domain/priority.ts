@@ -106,55 +106,85 @@ export function calculateEnvironmentalComponent(isEnvironmental: boolean): numbe
     return isEnvironmental ? WEIGHTS.ENVIRONMENTAL : 0;
 }
 
+/** Welfare boost for reporter-in-distress (single-report escalation) */
+const WELFARE_BOOST = 20;
+
+/** Minimum score for immediate-action reports (single serious report) */
+const IMMEDIATE_ACTION_MIN = 95;
+
 /**
  * Calculate full priority score with breakdown
- * 
- * Formula:
- * Raw Priority (R) = (U × 0.35) + (I × 0.30) + (F × 0.25) + (E × 0.10)
- * Final Priority = R × C × 100
- * 
- * Where C (confidence) acts as a penalty multiplier:
- * - High confidence (0.9) → 90% of raw score
- * - Low confidence (0.2) → 20% of raw score (spam sinks)
- * 
+ *
+ * Single serious reports: when requires_immediate_action is true, returns 95 + (confidence × 5) so
+ * they surface for immediate human review. Reporter welfare adds a boost to standard calculation.
+ *
+ * Formula (standard): Raw R = (U×0.35) + (I×0.30) + (F×0.25) + (E×0.10); Final = R × C × 100 + welfareBoost
+ *
+ * Components are stored scaled to fit NUMERIC(3,2) constraint (max 9.99):
+ * - urgency_component: urgency × 0.35 × 100 → max 35 → need to scale by 0.285 (9.99/35)
+ * - impact_component: impact × 0.30 × 100 → max 30 → need to scale by 0.333 (9.99/30)
+ * - frequency_component: freq × 0.25 × 100 → max 25 → need to scale by 0.4 (9.99/25)
+ * - environmental_component: env × 0.10 × 100 → max 10 → fits already (9.99/10 = 0.999)
+ *
  * @returns Score between 0-100
  */
 export function calculatePriority(input: PriorityInput): PriorityBreakdown {
-    // Calculate individual components
-    const urgencyComponent = calculateUrgencyComponent(input.urgency_score);
-    const impactComponent = calculateImpactComponent(input.impact_scope, input.report_count);
-    const frequencyComponent = calculateFrequencyComponent(input.reports_last_30_min);
-    const environmentalComponent = calculateEnvironmentalComponent(input.is_environmental);
-
-    // Raw priority score (0-1.0 range)
-    const rawScore =
-        urgencyComponent +
-        impactComponent +
-        frequencyComponent +
-        environmentalComponent;
-
-    // Clamp confidence between 0 and 1
     const confidenceMultiplier = Math.max(0, Math.min(1, input.confidence_score));
 
-    // Final score with confidence adjustment (0-100 range)
-    const totalScore = rawScore * confidenceMultiplier * 100;
+    // IMMEDIATE ESCALATION: Single critical report bypasses normal priority
+    if (input.requires_immediate_action === true) {
+        const totalScore = Math.min(100, IMMEDIATE_ACTION_MIN + confidenceMultiplier * 5);
+        return {
+            urgency_component: round2(9.99),  // Max allowed by NUMERIC(3,2)
+            impact_component: round2(9.99),   // Max allowed by NUMERIC(3,2)
+            frequency_component: round2(0),
+            environmental_component: round2(0),
+            raw_score: round2(totalScore),
+            confidence_multiplier: round2(confidenceMultiplier),
+            total_score: round2(totalScore),
+        };
+    }
+
+    // Calculate individual components (values before scaling, 0-1 range)
+    const urgencyValue = calculateUrgencyComponent(input.urgency_score);
+    const impactValue = calculateImpactComponent(input.impact_scope, input.report_count);
+    const frequencyValue = calculateFrequencyComponent(input.reports_last_30_min);
+    const environmentalValue = calculateEnvironmentalComponent(input.is_environmental);
+
+    const rawScore =
+        urgencyValue +
+        impactValue +
+        frequencyValue +
+        environmentalValue;
+
+    const welfareBoost = input.reporter_welfare_flag ? WELFARE_BOOST : 0;
+    const totalScore = Math.min(100, rawScore * confidenceMultiplier * 100 + welfareBoost);
+
+    // Scale components to fit NUMERIC(3,2) constraint (max 9.99)
+    const MAX_COMPONENT = 9.99;
+    const SCALE_URGENCY = MAX_COMPONENT / 35;
+    const SCALE_IMPACT = MAX_COMPONENT / 30;
+    const SCALE_FREQUENCY = MAX_COMPONENT / 25;
 
     return {
-        urgency_component: round2(urgencyComponent * 100), // Scale to 0-35 for display
-        impact_component: round2(impactComponent * 100),   // Scale to 0-30 for display
-        frequency_component: round2(frequencyComponent * 100), // Scale to 0-25 for display
-        environmental_component: round2(environmentalComponent * 100), // Scale to 0-10 for display
+        urgency_component: round2Cap(urgencyValue * 100 * SCALE_URGENCY),
+        impact_component: round2Cap(impactValue * 100 * SCALE_IMPACT),
+        frequency_component: round2Cap(frequencyValue * 100 * SCALE_FREQUENCY),
+        environmental_component: round2Cap(Math.min(environmentalValue * 100, MAX_COMPONENT)),
         raw_score: round2(rawScore * 100),
         confidence_multiplier: round2(confidenceMultiplier),
         total_score: round2(totalScore),
     };
 }
 
-/**
- * Round to 2 decimal places
- */
+/** Round to 2 decimal places */
 function round2(value: number): number {
     return Math.round(value * 100) / 100;
+}
+
+/** Round and cap for NUMERIC(3,2) columns (max 9.99) */
+function round2Cap(value: number, max = 9.99): number {
+    return Math.min(round2(value), max);
 }
 
 /**
