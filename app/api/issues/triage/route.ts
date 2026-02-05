@@ -1,37 +1,38 @@
 /**
  * POST /api/issues/triage
  * Internal endpoint - runs automation pipeline on a report
- * Now uses real Gemini AI integration
+ * Requires admin (or service) authentication to prevent abuse and control LLM costs.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin, Tables } from '@/lib/db';
-import { analyzeIssue, checkGeminiHealth } from '@/lib/gemini';
+import { analyzeIssue, checkGeminiHealth, MODEL_NAME } from '@/lib/gemini';
 import type {
     TriageRequest,
     TriageResponse,
     ApiResponse
 } from '@/domain/types';
+import { logResponse } from '@/lib/api-logger';
+
+const PATH = '/api/issues/triage';
 
 export async function POST(request: NextRequest): Promise<NextResponse<ApiResponse<TriageResponse>>> {
     try {
-        // This endpoint is internal - should be called with service role
-        // In production, add proper authentication for internal calls
+        const { user, error: authError } = await requireAdmin();
+        if (authError) {
+            const res = { success: false, error: { code: authError.code, message: authError.message } };
+            logResponse('POST', PATH, authError.status, res);
+            return NextResponse.json(res, { status: authError.status });
+        }
 
         const body: TriageRequest = await request.json();
         const { issue_report_id, title, description } = body;
 
         if (!issue_report_id || !title || !description) {
-            return NextResponse.json(
-                {
-                    success: false,
-                    error: {
-                        code: 'VALIDATION_ERROR',
-                        message: 'issue_report_id, title, and description are required'
-                    }
-                },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'issue_report_id, title, and description are required' } };
+            logResponse('POST', PATH, 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
         // Run Gemini triage
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
                 confidence_score: triageResult.confidence_score,
                 raw_model_output: {
                     reasoning: triageResult.reasoning,
-                    model: 'gemini-1.5-flash',
+                    model: MODEL_NAME,
                     timestamp: new Date().toISOString(),
                 },
             }, {
@@ -58,13 +59,12 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
 
         if (insertError) {
             console.error('Failed to store automation metadata:', insertError);
-            return NextResponse.json(
-                { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to store triage results' } },
-                { status: 500 }
-            );
+            const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to store triage results' } };
+            logResponse('POST', PATH, 500, res);
+            return NextResponse.json(res, { status: 500 });
         }
 
-        return NextResponse.json({
+        const res = {
             success: true,
             data: {
                 extracted_category: triageResult.extracted_category,
@@ -72,22 +72,24 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
                 impact_scope: triageResult.impact_scope,
                 environmental_flag: triageResult.environmental_flag,
                 confidence_score: triageResult.confidence_score,
-                raw_model_output: {
-                    reasoning: triageResult.reasoning,
-                },
+                raw_model_output: { reasoning: triageResult.reasoning },
             },
-        });
+        };
+        logResponse('POST', PATH, 200, res);
+        return NextResponse.json(res);
 
     } catch (error) {
         console.error('Triage endpoint error:', error);
+        const errRes = {
+            success: false,
+            error: {
+                code: 'AUTOMATION_ERROR',
+                message: error instanceof Error ? error.message : 'Triage pipeline failed'
+            }
+        };
+        logResponse('POST', PATH, 500, errRes);
         return NextResponse.json(
-            {
-                success: false,
-                error: {
-                    code: 'AUTOMATION_ERROR',
-                    message: error instanceof Error ? error.message : 'Triage pipeline failed'
-                }
-            },
+            errRes,
             { status: 503 }
         );
     }
@@ -100,18 +102,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
 export async function GET(): Promise<NextResponse<ApiResponse<{ available: boolean; error?: string }>>> {
     try {
         const health = await checkGeminiHealth();
-
-        return NextResponse.json({
-            success: health.available,
-            data: health,
-        }, { status: health.available ? 200 : 503 });
+        const status = health.available ? 200 : 503;
+        const res = { success: health.available, data: health };
+        logResponse('GET', PATH, status, res);
+        return NextResponse.json(res, { status });
     } catch (error) {
-        return NextResponse.json({
-            success: false,
-            data: {
-                available: false,
-                error: error instanceof Error ? error.message : 'Health check failed'
-            },
-        }, { status: 503 });
+        const res = { success: false, data: { available: false, error: error instanceof Error ? error.message : 'Health check failed' } };
+        logResponse('GET', PATH, 503, res);
+        return NextResponse.json(res, { status: 503 });
     }
 }

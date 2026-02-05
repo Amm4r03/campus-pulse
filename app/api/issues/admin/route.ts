@@ -12,6 +12,9 @@ import type {
     ApiResponse,
     PaginatedResponse
 } from '@/domain/types';
+import { logResponse } from '@/lib/api-logger';
+
+const PATH = '/api/issues/admin';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
@@ -21,18 +24,18 @@ export async function GET(request: NextRequest): Promise<NextResponse<ApiRespons
         // Authenticate and authorize
         const { user, error: authError } = await requireAdmin();
         if (authError) {
-            return NextResponse.json(
-                { success: false, error: { code: authError.code, message: authError.message } },
-                { status: authError.status }
-            );
+            const res = { success: false, error: { code: authError.code, message: authError.message } };
+            logResponse('GET', PATH, authError.status, res);
+            return NextResponse.json(res, { status: authError.status });
         }
 
         // Parse query parameters
         const { searchParams } = new URL(request.url);
         const params: AdminIssuesQueryParams = {
             status: (searchParams.get('status') as AdminIssuesQueryParams['status']) || 'open',
-            authority_id: searchParams.get('authority_id') || undefined,
-            category_id: searchParams.get('category_id') || undefined,
+            authority_name: searchParams.get('authority_name') || undefined,
+            category_name: searchParams.get('category_name') || undefined,
+            location_name: searchParams.get('location_name') || undefined,
             sort_by: (searchParams.get('sort_by') as AdminIssuesQueryParams['sort_by']) || 'priority',
             order: (searchParams.get('order') as AdminIssuesQueryParams['order']) || 'desc',
             page: parseInt(searchParams.get('page') || '1', 10),
@@ -44,20 +47,29 @@ export async function GET(request: NextRequest): Promise<NextResponse<ApiRespons
             .from(Views.AGGREGATED_ISSUES_DASHBOARD)
             .select('*', { count: 'exact' });
 
-        // Apply filters
+        // Apply filters (support comma-separated for "active" = open,in_progress)
         if (params.status && params.status !== 'all') {
-            query = query.eq('status', params.status);
+            const statusParam = String(params.status);
+            if (statusParam.includes(',')) {
+                const statuses = statusParam.split(',').map((s) => s.trim()).filter(Boolean);
+                if (statuses.length > 0) {
+                    query = query.in('status', statuses);
+                }
+            } else {
+                query = query.eq('status', params.status);
+            }
         }
 
-        if (params.authority_id) {
-            // Need to join with aggregated_issues for authority filter
-            // The view might not have authority_id directly, so we filter by name
-            query = query.eq('authority_name', params.authority_id);
+        if (params.authority_name) {
+            query = query.eq('authority_name', params.authority_name);
         }
 
-        if (params.category_id) {
-            // Similar issue - filter by category_name
-            query = query.eq('category_name', params.category_id);
+        if (params.category_name) {
+            query = query.eq('category_name', params.category_name);
+        }
+
+        if (params.location_name) {
+            query = query.eq('location_name', params.location_name);
         }
 
         // Apply sorting
@@ -76,34 +88,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<ApiRespons
 
         if (error) {
             console.error('Failed to fetch admin issues:', error);
-            return NextResponse.json(
-                { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to fetch issues' } },
-                { status: 500 }
-            );
+            const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to fetch issues' } };
+            logResponse('GET', PATH, 500, res);
+            return NextResponse.json(res, { status: 500 });
         }
 
         const totalCount = count || 0;
         const totalPages = Math.ceil(totalCount / limit);
-
-        return NextResponse.json({
+        const res = {
             success: true,
             data: {
                 items: (data || []) as AggregatedIssueDashboard[],
-                pagination: {
-                    page,
-                    limit,
-                    total: totalCount,
-                    total_pages: totalPages,
-                },
+                pagination: { page, limit, total: totalCount, total_pages: totalPages },
             },
-        });
+        };
+        logResponse('GET', PATH, 200, res);
+        return NextResponse.json(res);
 
     } catch (error) {
         console.error('Unexpected error in admin issues:', error);
-        return NextResponse.json(
-            { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } },
-            { status: 500 }
-        );
+        const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } };
+        logResponse('GET', PATH, 500, res);
+        return NextResponse.json(res, { status: 500 });
     }
 }
 
@@ -114,8 +120,10 @@ function getSortColumn(sortBy: string): string {
     switch (sortBy) {
         case 'priority':
             return 'current_priority';
+        case 'date':
         case 'created_at':
             return 'created_at';
+        case 'frequency':
         case 'report_count':
             return 'total_reports';
         default:
