@@ -1,7 +1,11 @@
 import type { Metadata, Viewport } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import { Toaster } from "@/components/ui/sonner"
+import { validateEnv } from "@/lib/env"
 import "./globals.css"
+
+// Log missing env vars on server (non-blocking; does not throw)
+validateEnv()
 
 const geistSans = Geist({
   variable: "--font-geist-sans",

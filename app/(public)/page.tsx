@@ -99,20 +99,42 @@ export default function LandingPage() {
         <div className="absolute inset-x-0 -bottom-px h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
       </section>
 
-      {/* Stats Section */}
+      {/* Grievance Processing Flow */}
       <section className="border-b bg-muted/30 py-12">
         <div className="container mx-auto px-4">
-          <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
-            {stats.map((stat) => (
-              <div key={stat.label} className="text-center">
-                <div className="text-3xl font-bold text-primary md:text-4xl">
-                  {stat.value}
-                </div>
-                <div className="mt-1 text-sm text-muted-foreground">
-                  {stat.label}
-                </div>
+          <div className="mx-auto max-w-5xl">
+            <div className="text-center mb-8">
+              <h3 className="text-lg font-semibold text-muted-foreground">How Your Grievance Gets Resolved</h3>
+            </div>
+            <div className="relative">
+              {/* Connecting Line - COMMENTED OUT */}
+              {/*
+              <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-gradient-to-r from-primary/20 via-primary to-primary/20 hidden md:block" />
+              */}
+              
+              <div className="grid grid-cols-2 gap-6 md:grid-cols-5">
+                {[
+                  { step: '1', title: 'Submit', desc: 'Report issue', icon: '📝' },
+                  { step: '2', title: 'AI Triage', desc: 'Auto-categorize', icon: '🤖' },
+                  { step: '3', title: 'Priority', desc: 'Urgency scored', icon: '📊' },
+                  { step: '4', title: 'Route', desc: 'To authority', icon: '📍' },
+                  { step: '5', title: 'Resolve', desc: 'Issue closed', icon: '✅' },
+                ].map((item, index) => (
+                  <div key={item.step} className="relative flex flex-col items-center text-center">
+                    <div className="z-10 mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-background border-2 border-primary shadow-sm text-2xl">
+                      {item.icon}
+                    </div>
+                    <div className="text-sm font-semibold">{item.title}</div>
+                    <div className="text-xs text-muted-foreground">{item.desc}</div>
+                    {index < 4 && (
+                      <div className="absolute -right-3 top-7 z-10 hidden md:block">
+                        <ArrowRight className="h-4 w-4 text-primary" />
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
+            </div>
           </div>
         </div>
       </section>
