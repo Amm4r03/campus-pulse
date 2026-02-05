@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { useIssueStore, useAuthStore } from '@/stores'
 import { cn } from '@/lib/utils'
 import type { IssueStatus } from '@/types'
@@ -86,7 +87,7 @@ function EmptyState() {
 
 export default function MyIssuesPage() {
   const { user } = useAuthStore()
-  const { myIssues, isLoading, filters, setFilters, fetchMyIssues } = useIssueStore()
+  const { myIssues, isLoading, filters, setFilters, fetchMyIssues, error: fetchError } = useIssueStore()
 
   useEffect(() => {
     if (user?.id) {
@@ -126,6 +127,14 @@ export default function MyIssuesPage() {
           </Link>
         </Button>
       </div>
+
+      {fetchError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Could not load issues</AlertTitle>
+          <AlertDescription>{fetchError}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Filters */}
       <Card className="shadow-sm">
