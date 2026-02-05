@@ -317,9 +317,11 @@ export interface AutomationOutput {
 
 export interface PriorityInput {
     urgency_score: number;
+    impact_scope: ImpactScope;
     is_environmental: boolean;
     report_count: number;
     reports_last_30_min: number;
+    confidence_score: number;
 }
 
 export interface PriorityBreakdown {
@@ -327,6 +329,8 @@ export interface PriorityBreakdown {
     impact_component: number;
     frequency_component: number;
     environmental_component: number;
+    raw_score: number;
+    confidence_multiplier: number;
     total_score: number;
 }
 
