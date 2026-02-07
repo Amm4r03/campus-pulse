@@ -18,3 +18,9 @@ Backend:
 Next.js API routes / server actions
 
 Supabase for database operations
+
+Tooling:
+
+Vitest for unit tests (e.g. triage/spam rules)
+
+API response logger for audit/debug (lib/api-logger)

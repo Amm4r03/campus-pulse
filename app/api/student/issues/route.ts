@@ -7,6 +7,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireStudent } from '@/lib/auth';
 import { supabaseAdmin, Tables, Views } from '@/lib/db';
 import type { StudentReportView, ApiResponse, PaginatedResponse } from '@/domain/types';
+import { logResponse } from '@/lib/api-logger';
+
+const PATH = '/api/student/issues';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
@@ -16,10 +19,9 @@ export async function GET(request: NextRequest): Promise<NextResponse<ApiRespons
         // Authenticate
         const { user, error: authError } = await requireStudent();
         if (authError) {
-            return NextResponse.json(
-                { success: false, error: { code: authError.code, message: authError.message } },
-                { status: authError.status }
-            );
+            const res = { success: false, error: { code: authError.code, message: authError.message } };
+            logResponse('GET', PATH, authError.status, res);
+            return NextResponse.json(res, { status: authError.status });
         }
 
         // Parse query parameters
@@ -44,33 +46,27 @@ export async function GET(request: NextRequest): Promise<NextResponse<ApiRespons
 
         if (error) {
             console.error('Failed to fetch student issues:', error);
-            return NextResponse.json(
-                { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to fetch issues' } },
-                { status: 500 }
-            );
+            const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to fetch issues' } };
+            logResponse('GET', PATH, 500, res);
+            return NextResponse.json(res, { status: 500 });
         }
 
         const totalCount = count || 0;
         const totalPages = Math.ceil(totalCount / limit);
-
-        return NextResponse.json({
+        const res = {
             success: true,
             data: {
                 items: (data || []) as StudentReportView[],
-                pagination: {
-                    page,
-                    limit,
-                    total: totalCount,
-                    total_pages: totalPages,
-                },
+                pagination: { page, limit, total: totalCount, total_pages: totalPages },
             },
-        });
+        };
+        logResponse('GET', PATH, 200, res);
+        return NextResponse.json(res);
 
     } catch (error) {
         console.error('Unexpected error in student issues:', error);
-        return NextResponse.json(
-            { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } },
-            { status: 500 }
-        );
+        const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } };
+        logResponse('GET', PATH, 500, res);
+        return NextResponse.json(res, { status: 500 });
     }
 }

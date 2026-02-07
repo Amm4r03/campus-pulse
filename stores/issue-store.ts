@@ -34,7 +34,19 @@ interface IssueActions {
   
   // Issue submission
   submitIssue: (data: IssueFormData) => Promise<IssueReport>
-  
+  /** Add issue from streaming create API completion (so UI can show progress then apply result) */
+  addIssueFromStream: (
+    resultData: {
+      issue_id: string
+      aggregated_issue_id: string
+      aggregation_status: string
+      initial_priority: number
+      urgency_level?: string
+      requires_immediate_action?: boolean
+    },
+    formData: IssueFormData
+  ) => IssueReport
+
   // Draft management
   setDraft: (draft: Partial<IssueFormData>) => void
   clearDraft: () => void
@@ -95,31 +107,29 @@ export const useIssueStore = create<IssueStore>()((set, get) => ({
             location: item.location_name ? { id: item.location_id, name: item.location_name } : getLocationById(item.location_id),
           }))
           
-          set({ myIssues: issues, isLoading: false })
+          set({ myIssues: issues, isLoading: false, error: null })
           return
         }
       }
-      
-      // If API fails, use locally submitted issues
+
+      // API returned non-OK or no data: set error and fall back to local only for display
+      const errorMessage = (await response.json().catch(() => ({})))?.error?.message ?? 'Failed to load issues'
       const { submittedIssues, filters } = get()
       let filtered = [...submittedIssues]
-      
       if (filters.status !== 'all') {
         filtered = filtered.filter(i => i.status === filters.status)
       }
-      
       filtered.sort((a, b) => {
         const multiplier = filters.sort_order === 'asc' ? 1 : -1
         return multiplier * (new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
       })
-      
-      set({ myIssues: filtered, isLoading: false })
+      set({ myIssues: filtered, isLoading: false, error: errorMessage })
       
     } catch (error) {
       console.error('Failed to fetch issues:', error)
-      // Fall back to local submitted issues
+      const message = error instanceof Error ? error.message : 'Failed to load issues'
       const { submittedIssues } = get()
-      set({ myIssues: submittedIssues, isLoading: false })
+      set({ myIssues: submittedIssues, isLoading: false, error: message })
     }
   },
 
@@ -199,40 +209,53 @@ export const useIssueStore = create<IssueStore>()((set, get) => ({
           isSubmitting: false,
           draft: {},
         }))
-        
-        return newIssue
+
+        return {
+          ...newIssue,
+          urgency_level: result.data.urgency_level,
+          requires_immediate_action: result.data.requires_immediate_action,
+        }
       }
       
-      // If API call fails, create issue locally for demo
-      throw new Error(result.error?.message || 'API call failed')
+      // API call failed: set error and do not create a local issue
+      const message = result.error?.message || 'API call failed'
+      set({ isSubmitting: false, error: message })
+      throw new Error(message)
       
     } catch (error) {
-      console.error('API submission failed, creating local issue:', error)
-      
-      // Create local issue for demo purposes
-      const newIssue: IssueReport = {
-        id: `report-${Date.now()}`,
-        reporter_id: 'student-1',
-        title: data.title,
-        description: data.description,
-        category_id: data.category_id,
-        location_id: data.location_id,
-        created_at: new Date().toISOString(),
-        status: 'open',
-        aggregation_status: 'standalone',
-        category: getCategoryById(data.category_id),
-        location: getLocationById(data.location_id),
-      }
-      
-      set(state => ({
-        myIssues: [newIssue, ...state.myIssues],
-        submittedIssues: [newIssue, ...state.submittedIssues],
-        isSubmitting: false,
-        draft: {},
-      }))
-      
-      return newIssue
+      console.error('API submission failed:', error)
+      const message = error instanceof Error ? error.message : 'Failed to submit issue'
+      set({ isSubmitting: false, error: message })
+      throw error
     }
+  },
+
+  addIssueFromStream: (resultData, formData) => {
+    const newIssue: IssueReport = {
+      id: resultData.issue_id,
+      reporter_id: 'student-1',
+      title: formData.title,
+      description: formData.description,
+      category_id: formData.category_id,
+      location_id: formData.location_id,
+      created_at: new Date().toISOString(),
+      status: 'open',
+      aggregation_status: resultData.aggregation_status === 'linked' ? 'aggregated' : 'standalone',
+      aggregated_issue_id: resultData.aggregated_issue_id,
+      priority_score: resultData.initial_priority,
+      category: getCategoryById(formData.category_id),
+      location: getLocationById(formData.location_id),
+      urgency_level: resultData.urgency_level,
+      requires_immediate_action: resultData.requires_immediate_action,
+    }
+    set((state) => ({
+      myIssues: [newIssue, ...state.myIssues],
+      submittedIssues: [newIssue, ...state.submittedIssues],
+      isSubmitting: false,
+      draft: {},
+      error: null,
+    }))
+    return newIssue
   },
 
   // Draft management for form persistence

@@ -145,6 +145,7 @@ Notes:
 
 * Stored per report for auditability
 * Raw LLM output preserved
+* raw_model_output (JSONB) can include: report_type (e.g. SPAM, GENERAL), spam_confidence (0–1), admin_marked_not_spam (boolean, set when admin marks "not spam" for training feedback)
 
 ---
 

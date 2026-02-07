@@ -190,8 +190,9 @@ export interface AdminActionRequest {
 
 export interface AdminIssuesQueryParams {
     status?: IssueStatus | 'all';
-    authority_id?: string;
-    category_id?: string;
+    authority_name?: string;
+    category_name?: string;
+    location_name?: string;
     sort_by?: 'priority' | 'created_at' | 'report_count';
     order?: 'asc' | 'desc';
     page?: number;
@@ -216,6 +217,9 @@ export interface CreateIssueResponse {
     aggregated_issue_id: string;
     aggregation_status: 'new' | 'linked';
     initial_priority: number;
+    /** For showing crisis resources when report is critical/high or immediate action */
+    urgency_level?: UrgencyLevel;
+    requires_immediate_action?: boolean;
 }
 
 export interface TriageResponse {
@@ -302,6 +306,15 @@ export interface AutomationInput {
     description: string;
 }
 
+/** Urgency level for single-report escalation (LLM-extracted) */
+export type UrgencyLevel = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
+
+/** Report type for abuse/safety handling (LLM-extracted) */
+export type ReportType = 'EMERGENCY' | 'SAFETY' | 'INFRASTRUCTURE' | 'ACADEMIC' | 'GENERAL' | 'TEST' | 'SPAM';
+
+/** Context validity (LLM-extracted) */
+export type ContextValidity = 'VALID' | 'AMBIGUOUS' | 'INVALID';
+
 export interface AutomationOutput {
     extracted_category: string;
     urgency_score: number;
@@ -309,6 +322,13 @@ export interface AutomationOutput {
     environmental_flag: boolean;
     confidence_score: number;
     reasoning: string;
+    /** Single-report escalation; stored in raw_model_output */
+    urgency_level?: UrgencyLevel;
+    report_type?: ReportType;
+    reporter_welfare_flag?: boolean;
+    requires_immediate_action?: boolean;
+    spam_confidence?: number;
+    context_validity?: ContextValidity;
 }
 
 // =============================================================================
@@ -322,6 +342,10 @@ export interface PriorityInput {
     report_count: number;
     reports_last_30_min: number;
     confidence_score: number;
+    /** When true, single serious report gets 95-100 priority (immediate review) */
+    requires_immediate_action?: boolean;
+    /** Reporter in distress; adds welfare boost */
+    reporter_welfare_flag?: boolean;
 }
 
 export interface PriorityBreakdown {

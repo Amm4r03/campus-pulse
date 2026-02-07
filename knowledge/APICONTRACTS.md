@@ -103,10 +103,9 @@ Health check for Gemini integration.
 Fetch aggregated issues for dashboard. Returns priority-sorted list.
 
 **Query Parameters:**
-- `status`: `open | in_progress | resolved | all` (default: `open`)
-- `authority_id`: Filter by authority
-- `category_id`: Filter by category
-- `sort_by`: `priority | created_at | report_count` (default: `priority`)
+- `status`: `open | in_progress | resolved | all | open,in_progress` (default: `open`). Use `open,in_progress` for "active" issues only; comma-separated values are supported.
+- `authority_name`, `category_name`, `location_name`: Filter by name (dashboard view uses names).
+- `sort_by`: `priority | date | frequency` (default: `priority`)
 - `order`: `asc | desc` (default: `desc`)
 - `page`: Page number (default: 1)
 - `limit`: Items per page (default: 20, max: 100)
@@ -222,9 +221,11 @@ Perform admin action on an aggregated issue.
     "priority_score": 80,
     "status": "in_progress"
   },
-  "notes": "Optional notes for audit log"
+  "notes": "Optional notes for audit log (required for resolve; stored as resolution notes)"
 }
 ```
+- For `resolve`: use `action_type: "resolve"` and optional `notes` (resolution notes). No `new_value` required.
+- For `assign`: use `new_value: { "authority_id": "uuid" }`.
 
 **Response (200):**
 ```json
@@ -328,6 +329,143 @@ Fetch all issue categories with default authority.
   ]
 }
 ```
+
+---
+
+### GET /api/authorities
+
+**Role:** Admin
+
+List all authorities (departments) for admin assign dropdown.
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": [
+    { "id": "uuid", "name": "Provost", "description": "Hostel issues" }
+  ]
+}
+```
+
+---
+
+### GET /api/stats/locations/most-reported
+
+**Role:** Admin
+
+Returns the location name with the highest total report count (for dashboard "High Volume Area" stat).
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "location": "Boys Hostel A",
+  "total_reports": 42
+}
+```
+
+---
+
+### GET /api/stats/resolved
+
+**Role:** Admin
+
+Returns resolved-issue counts from the database (status flag only; resolved issues are not deleted).
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "resolved_count": 120,
+    "resolved_today_count": 5
+  }
+}
+```
+
+---
+
+### GET /api/issues/admin/spam
+
+**Role:** Admin
+
+List reports classified as spam (for admin review). Excludes reports already marked "not spam" by admin.
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "data": {
+    "items": [
+      {
+        "id": "uuid",
+        "title": "string",
+        "description": "string (snippet)",
+        "created_at": "ISO8601",
+        "category_name": "string",
+        "location_name": "string",
+        "report_type": "SPAM",
+        "spam_confidence": 0.92
+      }
+    ],
+    "count": 3
+  }
+}
+```
+
+---
+
+### POST /api/issues/admin/spam/{reportId}/mark-not-spam
+
+**Role:** Admin
+
+Mark a report as not spam (admin correction). Updates `automation_metadata.raw_model_output` with `admin_marked_not_spam: true` for future model training. Report is no longer listed in spam list.
+
+**Response (200):**
+```json
+{ "success": true, "data": { "issue_report_id": "uuid" } }
+```
+
+---
+
+### GET /api/issues/admin/reports
+
+**Role:** Admin
+
+List all individual issue reports (no aggregation) with pagination and optional filters.
+
+**Query Parameters:** `page`, `limit`, `category_id`, `location_id`, `sort`, `order`
+
+**Response (200):** Paginated list of reports with `id`, `title`, `description`, `created_at`, `category_name`, `location_name`, `aggregated_issue_id`.
+
+---
+
+### POST /api/issues/smart-check
+
+**Role:** Student (or unauthenticated for pre-submit check)
+
+Quick spam/NSFW check on title + description before or during submit. Used to show rejection message without full pipeline.
+
+**Request:** `{ "title": "string", "description": "string" }`
+
+**Response (200):**
+```json
+{
+  "success": true,
+  "rejected_spam": false,
+  "message": "Optional message if rejected"
+}
+```
+If `rejected_spam: true`, client should show `message` and not submit.
+
+---
+
+### POST /api/issues/create/stream
+
+**Role:** Student
+
+Create issue report with server-sent events (SSE) for progress (triage → aggregate → priority). Response is a stream; client shows progress bar and final result or error (e.g. spam rejection).
 
 ---
 

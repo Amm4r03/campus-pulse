@@ -17,7 +17,8 @@ import {
   Droplets,
   Wrench,
   Trash2,
-  Sparkles
+  Sparkles,
+  AlertTriangle
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -45,11 +46,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { useAdminStore } from '@/stores'
+import { useApiOptions } from '@/hooks/use-api-options'
 import { cn } from '@/lib/utils'
-import { ISSUE_CATEGORIES, AUTHORITIES } from '@/lib/data/categories'
-import { CAMPUS_LOCATIONS } from '@/lib/data/locations'
 import type { IssueStatus } from '@/types'
+import { IMMEDIATE_REVIEW_PRIORITY_THRESHOLD } from '@/domain/priority'
+import { ResolveIssueModal } from '@/components/resolve-issue-modal'
+import { AssignAuthorityModal } from '@/components/assign-authority-modal'
 
 const statusConfig: Record<IssueStatus, { label: string; className: string }> = {
   open: { label: 'Open', className: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' },
@@ -62,6 +70,11 @@ const categoryIcons: Record<string, typeof Wifi> = {
   water: Droplets,
   electricity: Zap,
   sanitation: Trash2,
+  hostel: Wrench,
+  academics: Wrench,
+  safety: AlertCircle,
+  food: Droplets,
+  infrastructure: Wrench,
 }
 
 function StatCard({ 
@@ -138,15 +151,33 @@ export default function AdminDashboardPage() {
     filters, 
     isLoading, 
     fetchAggregatedIssues,
-    setFilters
+    setFilters,
+    resetFilters,
+    updateIssueStatus,
+    updateIssueAuthority,
+    mostReportedLocation,
+    resolvedTodayCount,
+    fetchResolvedStats,
   } = useAdminStore()
 
   const [selectedRows, setSelectedRows] = useState<Set<string>>(new Set())
   const [currentPage, setCurrentPage] = useState(1)
+  const [filterOpen, setFilterOpen] = useState(false)
+  const [resolveModalIssueId, setResolveModalIssueId] = useState<string | null>(null)
+  const [assignModalIssueId, setAssignModalIssueId] = useState<string | null>(null)
+  /** 'active' = open + in_progress, 'resolved' = recently resolved tab */
+  const [issuesTab, setIssuesTab] = useState<'active' | 'resolved'>('active')
+  const { apiCategories, apiLocations } = useApiOptions()
+
+  // Fetch issues for current tab (active = open+in_progress, resolved = resolved); counts from DB
+  useEffect(() => {
+    const status = issuesTab === 'active' ? 'open,in_progress' : 'resolved'
+    fetchAggregatedIssues({ status })
+  }, [fetchAggregatedIssues, issuesTab])
 
   useEffect(() => {
-    fetchAggregatedIssues()
-  }, [fetchAggregatedIssues])
+    fetchResolvedStats()
+  }, [fetchResolvedStats])
 
   const formatTimeAgo = (dateString: string) => {
     const date = new Date(dateString)
@@ -188,6 +219,9 @@ export default function AdminDashboardPage() {
 
   const allSelected = paginatedIssues.length > 0 && paginatedIssues.every(i => selectedRows.has(i.id))
 
+  // Single-report safety: issues requiring immediate human review (priority 95–100)
+  const immediateReviewIssues = aggregatedIssues.filter((i) => (i.priority_score ?? 0) >= IMMEDIATE_REVIEW_PRIORITY_THRESHOLD)
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -199,7 +233,7 @@ export default function AdminDashboardPage() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Critical Issues"
           value={stats.highPriority}
@@ -217,40 +251,183 @@ export default function AdminDashboardPage() {
         />
         <StatCard
           title="Resolved Today"
-          value={stats.resolved}
-          description="Issues closed"
+          value={resolvedTodayCount}
+          description="Issues closed (from database)"
           icon={CheckCircle2}
           iconBg="bg-emerald-50 dark:bg-emerald-900/20 text-emerald-500 dark:text-emerald-400"
-          trend={{ value: '92% rate', positive: true }}
         />
         <StatCard
           title="High Volume Area"
-          value="Boys Hostel"
+          value={mostReportedLocation ?? 'Loading...'}
           description="Most reported location"
           icon={TrendingUp}
           iconBg="bg-purple-50 dark:bg-purple-900/20 text-purple-500 dark:text-purple-400"
         />
       </div>
 
+      {/* Immediate Review – single-report safety (priority ≥ 90), only on Active tab */}
+      {issuesTab === 'active' && immediateReviewIssues.length > 0 && (
+        <Card className="shadow-sm border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              Immediate Review
+            </CardTitle>
+            <CardDescription>
+              These issues were flagged for immediate human review (e.g. safety or single serious reports).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {immediateReviewIssues.slice(0, 10).map((issue) => {
+                const categoryName = issue.category?.name ?? 'Unknown'
+                const locationName = issue.location?.name ?? 'Unknown'
+                return (
+                  <li key={issue.id}>
+                    <Link
+                      href={`/dashboard/issues/${issue.id}`}
+                      className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm hover:bg-muted/50"
+                    >
+                      <span className="font-medium">{categoryName}</span>
+                      <span className="text-muted-foreground">{locationName}</span>
+                      <Badge className="bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
+                        {issue.priority_score ?? 0}/100
+                      </Badge>
+                    </Link>
+                  </li>
+                )
+              })}
+            </ul>
+            {immediateReviewIssues.length > 10 && (
+              <p className="text-xs text-muted-foreground mt-2">
+                +{immediateReviewIssues.length - 10} more in the table below
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Issues Table Section */}
       <div className="space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-lg font-semibold">Active Issues</h2>
-            <p className="text-sm text-muted-foreground">
-              Real-time reports requiring administrative attention.
-            </p>
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-lg border border-border bg-muted/30 p-0.5">
+              <button
+                type="button"
+                onClick={() => { setIssuesTab('active'); setCurrentPage(1); }}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  issuesTab === 'active'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Active Issues
+              </button>
+              <button
+                type="button"
+                onClick={() => { setIssuesTab('resolved'); setCurrentPage(1); }}
+                className={cn(
+                  'rounded-md px-3 py-1.5 text-sm font-medium transition-colors',
+                  issuesTab === 'resolved'
+                    ? 'bg-background text-foreground shadow-sm'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                Recently Resolved
+              </button>
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">
+                {issuesTab === 'active' ? 'Active Issues' : 'Recently Resolved'}
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                {issuesTab === 'active'
+                  ? 'Open and in-progress reports requiring attention.'
+                  : 'Issues closed (kept for analytics).'}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-2">
-              <Filter className="h-4 w-4" />
-              Filter
-              {(filters.status !== 'all' || filters.category_id !== 'all') && (
-                <span className="bg-muted text-muted-foreground text-[10px] px-1.5 rounded">
-                  {[filters.status !== 'all', filters.category_id !== 'all'].filter(Boolean).length}
-                </span>
-              )}
-            </Button>
+            {issuesTab === 'active' && (
+            <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <Filter className="h-4 w-4" />
+                  Filter
+                  {(filters.status !== 'all' || filters.category_name !== 'all' || filters.location_name !== 'all') && (
+                    <span className="bg-muted text-muted-foreground text-[10px] px-1.5 rounded">
+                      {[filters.status !== 'all', filters.category_name !== 'all', filters.location_name !== 'all'].filter(Boolean).length}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72" align="end">
+                <div className="space-y-4">
+                  <h4 className="font-medium">Filter results</h4>
+                  <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground">Status</label>
+                    <Select
+                      value={filters.status}
+                      onValueChange={(v) => setFilters({ status: v as IssueStatus | 'all' })}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All statuses</SelectItem>
+                        <SelectItem value="open">Open</SelectItem>
+                        <SelectItem value="in_progress">In Progress</SelectItem>
+                        <SelectItem value="resolved">Resolved</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground">Category</label>
+                    <Select
+                      value={filters.category_name}
+                      onValueChange={(v) => setFilters({ category_name: v })}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder="All categories" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All categories</SelectItem>
+                        {apiCategories.map((c) => (
+                          <SelectItem key={c.id} value={c.name}>{c.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground">Location</label>
+                    <Select
+                      value={filters.location_name}
+                      onValueChange={(v) => setFilters({ location_name: v })}
+                    >
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder="All locations" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All locations</SelectItem>
+                        {apiLocations.map((l) => (
+                          <SelectItem key={l.id} value={l.name}>{l.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex gap-2 pt-2">
+                    <Button size="sm" variant="outline" className="flex-1" onClick={() => { resetFilters(); setFilterOpen(false); }}>
+                      Reset
+                    </Button>
+                    <Button size="sm" className="flex-1" onClick={() => setFilterOpen(false)}>
+                      Done
+                    </Button>
+                  </div>
+                </div>
+              </PopoverContent>
+            </Popover>
+            )}
             <Select
               value={filters.sort_by}
               onValueChange={(value) => setFilters({ sort_by: value as 'priority' | 'date' | 'frequency' })}
@@ -274,9 +451,13 @@ export default function AdminDashboardPage() {
           ) : aggregatedIssues.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <Sparkles className="mb-4 h-12 w-12 text-muted-foreground" />
-              <h3 className="text-lg font-semibold">All Clear!</h3>
+              <h3 className="text-lg font-semibold">
+                {issuesTab === 'active' ? 'All Clear!' : 'No resolved issues'}
+              </h3>
               <p className="text-sm text-muted-foreground">
-                No active issues at the moment.
+                {issuesTab === 'active'
+                  ? 'No active issues at the moment.'
+                  : 'Resolved issues will appear here for analytics.'}
               </p>
             </div>
           ) : (
@@ -301,11 +482,12 @@ export default function AdminDashboardPage() {
                   </TableHeader>
                   <TableBody>
                     {paginatedIssues.map((issue) => {
-                      const category = ISSUE_CATEGORIES.find(c => c.id === issue.canonical_category_id)
-                      const location = CAMPUS_LOCATIONS.find(l => l.id === issue.location_id)
-                      const authority = AUTHORITIES.find(a => a.id === issue.authority_id)
+                      const categoryName = issue.category?.name ?? 'Unknown Category'
+                      const locationName = issue.location?.name ?? 'Unknown'
+                      const authorityName = issue.authority?.name ?? 'Unassigned'
+                      const isEnvironmental = !!(issue.category && 'is_environmental' in issue.category && issue.category.is_environmental)
                       const priority = getPriorityLabel(issue.priority_score)
-                      const IconComponent = categoryIcons[issue.canonical_category_id] || Wrench
+                      const IconComponent = categoryIcons[categoryName] || Wrench
 
                       return (
                         <TableRow 
@@ -322,7 +504,7 @@ export default function AdminDashboardPage() {
                             <Link href={`/dashboard/issues/${issue.id}`} className="flex items-center gap-3">
                               <div className={cn(
                                 "w-8 h-8 rounded-lg flex items-center justify-center",
-                                category?.is_environmental 
+                                isEnvironmental 
                                   ? "bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400"
                                   : "bg-muted text-muted-foreground"
                               )}>
@@ -330,20 +512,20 @@ export default function AdminDashboardPage() {
                               </div>
                               <div>
                                 <p className="font-medium group-hover:text-primary transition-colors">
-                                  {category?.name || 'Unknown Category'}
+                                  {categoryName}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
-                                  {category?.is_environmental ? 'Environmental' : 'Infrastructure'}
+                                  {isEnvironmental ? 'Environmental' : 'Infrastructure'}
                                 </p>
                               </div>
                             </Link>
                           </TableCell>
                           <TableCell className="text-muted-foreground">
-                            {location?.name || 'Unknown'}
+                            {locationName}
                           </TableCell>
                           <TableCell>
                             <Badge className={priority.className}>
-                              {priority.label}
+                              {priority.label} ({Math.round(issue.priority_score ?? 0)}/100)
                             </Badge>
                           </TableCell>
                           <TableCell>
@@ -364,9 +546,9 @@ export default function AdminDashboardPage() {
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[10px] font-medium">
-                                {authority?.name?.charAt(0) || '?'}
+                                {authorityName.charAt(0)}
                               </div>
-                              <span className="text-sm">{authority?.name || 'Unassigned'}</span>
+                              <span className="text-sm">{authorityName}</span>
                             </div>
                           </TableCell>
                           <TableCell className="text-right">
@@ -382,8 +564,14 @@ export default function AdminDashboardPage() {
                                     View Details
                                   </Link>
                                 </DropdownMenuItem>
-                                <DropdownMenuItem>Mark as Resolved</DropdownMenuItem>
-                                <DropdownMenuItem>Assign Authority</DropdownMenuItem>
+                                {issuesTab === 'active' && (
+                                  <DropdownMenuItem onClick={() => setResolveModalIssueId(issue.id)}>
+                                    Mark as Resolved
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuItem onClick={() => setAssignModalIssueId(issue.id)}>
+                                  Assign Authority
+                                </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
                           </TableCell>
@@ -426,6 +614,25 @@ export default function AdminDashboardPage() {
           )}
         </Card>
       </div>
+
+      <ResolveIssueModal
+        open={resolveModalIssueId !== null}
+        onOpenChange={(open) => !open && setResolveModalIssueId(null)}
+        issueId={resolveModalIssueId}
+        onConfirm={async (issueId, notes) => {
+          await updateIssueStatus(issueId, 'resolved', notes)
+          fetchResolvedStats()
+        }}
+      />
+      <AssignAuthorityModal
+        open={assignModalIssueId !== null}
+        onOpenChange={(open) => !open && setAssignModalIssueId(null)}
+        issueId={assignModalIssueId}
+        currentAuthorityName={assignModalIssueId ? aggregatedIssues.find((i) => i.id === assignModalIssueId)?.authority?.name : undefined}
+        onConfirm={async (issueId, authorityId) => {
+          await updateIssueAuthority(issueId, authorityId)
+        }}
+      />
     </div>
   )
 }

@@ -8,6 +8,9 @@ import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin, Tables } from '@/lib/db';
 import { getLinkedReports } from '@/domain/aggregation';
 import type { AdminIssueDetailResponse, ApiResponse } from '@/domain/types';
+import { logResponse } from '@/lib/api-logger';
+
+const PATH = '/api/issues/[id]';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
@@ -21,19 +24,17 @@ export async function GET(
         // Authenticate and authorize
         const { user, error: authError } = await requireAdmin();
         if (authError) {
-            return NextResponse.json(
-                { success: false, error: { code: authError.code, message: authError.message } },
-                { status: authError.status }
-            );
+            const res = { success: false, error: { code: authError.code, message: authError.message } };
+            logResponse('GET', PATH, authError.status, res);
+            return NextResponse.json(res, { status: authError.status });
         }
 
         const { id } = await params;
 
         if (!id) {
-            return NextResponse.json(
-                { success: false, error: { code: 'VALIDATION_ERROR', message: 'Issue ID is required' } },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'Issue ID is required' } };
+            logResponse('GET', PATH, 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
         // Fetch aggregated issue with related data
@@ -49,10 +50,9 @@ export async function GET(
             .single();
 
         if (issueError || !issue) {
-            return NextResponse.json(
-                { success: false, error: { code: 'NOT_FOUND', message: 'Issue not found' } },
-                { status: 404 }
-            );
+            const res = { success: false, error: { code: 'NOT_FOUND', message: 'Issue not found' } };
+            logResponse('GET', PATH, 404, res);
+            return NextResponse.json(res, { status: 404 });
         }
 
         // Get linked reports (anonymized - no reporter_id)
@@ -148,16 +148,14 @@ export async function GET(
             admin_actions: adminActions || [],
         };
 
-        return NextResponse.json({
-            success: true,
-            data: response,
-        });
+        const res = { success: true, data: response };
+        logResponse('GET', PATH, 200, res);
+        return NextResponse.json(res);
 
     } catch (error) {
         console.error('Unexpected error in issue detail:', error);
-        return NextResponse.json(
-            { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } },
-            { status: 500 }
-        );
+        const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } };
+        logResponse('GET', PATH, 500, res);
+        return NextResponse.json(res, { status: 500 });
     }
 }

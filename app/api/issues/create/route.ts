@@ -13,6 +13,7 @@ import type {
     CreateIssueResponse,
     ApiResponse
 } from '@/domain/types';
+import { logResponse } from '@/lib/api-logger';
 
 // Validation constants
 const MIN_TITLE_LENGTH = 5;
@@ -23,10 +24,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
         // Authenticate and authorize
         const { user, error: authError } = await requireStudent();
         if (authError) {
-            return NextResponse.json(
-                { success: false, error: { code: authError.code, message: authError.message } },
-                { status: authError.status }
-            );
+            const res = { success: false, error: { code: authError.code, message: authError.message } };
+            logResponse('POST', '/api/issues/create', authError.status, res);
+            return NextResponse.json(res, { status: authError.status });
         }
 
         // Parse request body
@@ -35,42 +35,21 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
 
         // Validate input
         if (!title || title.length < MIN_TITLE_LENGTH) {
-            return NextResponse.json(
-                {
-                    success: false,
-                    error: {
-                        code: 'VALIDATION_ERROR',
-                        message: `Title must be at least ${MIN_TITLE_LENGTH} characters`
-                    }
-                },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: `Title must be at least ${MIN_TITLE_LENGTH} characters` } };
+            logResponse('POST', '/api/issues/create', 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
         if (!description || description.length < MIN_DESCRIPTION_LENGTH) {
-            return NextResponse.json(
-                {
-                    success: false,
-                    error: {
-                        code: 'VALIDATION_ERROR',
-                        message: `Description must be at least ${MIN_DESCRIPTION_LENGTH} characters`
-                    }
-                },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: `Description must be at least ${MIN_DESCRIPTION_LENGTH} characters` } };
+            logResponse('POST', '/api/issues/create', 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
         if (!category_id || !location_id) {
-            return NextResponse.json(
-                {
-                    success: false,
-                    error: {
-                        code: 'VALIDATION_ERROR',
-                        message: 'Category and location are required'
-                    }
-                },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'Category and location are required' } };
+            logResponse('POST', '/api/issues/create', 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
         // Validate category exists
@@ -81,10 +60,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
             .single();
 
         if (categoryError || !category) {
-            return NextResponse.json(
-                { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid category' } },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid category' } };
+            logResponse('POST', '/api/issues/create', 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
         // Validate location exists
@@ -95,10 +73,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
             .single();
 
         if (locationError || !location) {
-            return NextResponse.json(
-                { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid location' } },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid location' } };
+            logResponse('POST', '/api/issues/create', 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
         // Step 1: Insert issue report (immutable)
@@ -116,10 +93,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
 
         if (insertError) {
             console.error('Failed to create issue report:', insertError);
-            return NextResponse.json(
-                { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to create issue report' } },
-                { status: 500 }
-            );
+            const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to create issue report' } };
+            logResponse('POST', '/api/issues/create', 500, res);
+            return NextResponse.json(res, { status: 500 });
         }
 
         // Step 2: Run complete automation pipeline (with Gemini AI)
@@ -131,36 +107,44 @@ export async function POST(request: NextRequest): Promise<NextResponse<ApiRespon
             location_id
         );
 
-        // Step 3: Return response
+        // Step 3: Return response (include urgency_level and requires_immediate_action for crisis resources)
+        const meta = automationResult.automation_metadata;
+        const urgencyLevel = meta?.urgency_level as CreateIssueResponse['urgency_level'];
+        const requiresImmediateAction = meta?.requires_immediate_action;
+
         if (!automationResult.success) {
-            // Automation failed but issue was created - return partial success
             console.warn('Automation pipeline failed but issue created:', automationResult.error);
-            return NextResponse.json({
-                success: true,
-                data: {
-                    issue_id: issueReport.id,
-                    aggregated_issue_id: automationResult.aggregated_issue_id || 'pending',
-                    aggregation_status: 'new',
-                    initial_priority: automationResult.priority.total_score,
-                },
-            }, { status: 201 });
+            const failureData: CreateIssueResponse = {
+                issue_id: issueReport.id,
+                aggregated_issue_id: automationResult.aggregated_issue_id || 'pending',
+                aggregation_status: 'new',
+                initial_priority: automationResult.priority.total_score,
+                urgency_level: urgencyLevel,
+                requires_immediate_action: requiresImmediateAction,
+            };
+            const res: ApiResponse<CreateIssueResponse> = { success: true, data: failureData };
+            logResponse('POST', '/api/issues/create', 201, res);
+            return NextResponse.json(res, { status: 201 });
         }
 
-        return NextResponse.json({
-            success: true,
-            data: {
-                issue_id: issueReport.id,
-                aggregated_issue_id: automationResult.aggregated_issue_id,
-                aggregation_status: automationResult.aggregation_status,
-                initial_priority: automationResult.priority.total_score,
-            },
-        }, { status: 201 });
+        const aggregationStatus: 'new' | 'linked' =
+            automationResult.aggregation_status === 'new' ? 'new' : 'linked';
+        const data: CreateIssueResponse = {
+            issue_id: issueReport.id,
+            aggregated_issue_id: automationResult.aggregated_issue_id,
+            aggregation_status: aggregationStatus,
+            initial_priority: automationResult.priority.total_score,
+            urgency_level: urgencyLevel,
+            requires_immediate_action: requiresImmediateAction,
+        };
+        const res: ApiResponse<CreateIssueResponse> = { success: true, data };
+        logResponse('POST', '/api/issues/create', 201, res);
+        return NextResponse.json(res, { status: 201 });
 
     } catch (error) {
         console.error('Unexpected error in issue creation:', error);
-        return NextResponse.json(
-            { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } },
-            { status: 500 }
-        );
+        const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } };
+        logResponse('POST', '/api/issues/create', 500, res);
+        return NextResponse.json(res, { status: 500 });
     }
 }

@@ -7,6 +7,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireAdmin } from '@/lib/auth';
 import { supabaseAdmin, Tables } from '@/lib/db';
 import type { AdminActionRequest, ApiResponse, AdminAction } from '@/domain/types';
+import { logResponse } from '@/lib/api-logger';
+
+const PATH = '/api/issues/[id]/action';
 
 interface RouteParams {
     params: Promise<{ id: string }>;
@@ -20,10 +23,9 @@ export async function POST(
         // Authenticate and authorize
         const { user, error: authError } = await requireAdmin();
         if (authError) {
-            return NextResponse.json(
-                { success: false, error: { code: authError.code, message: authError.message } },
-                { status: authError.status }
-            );
+            const res = { success: false, error: { code: authError.code, message: authError.message } };
+            logResponse('POST', PATH, authError.status, res);
+            return NextResponse.json(res, { status: authError.status });
         }
 
         const { id: aggregatedIssueId } = await params;
@@ -31,26 +33,22 @@ export async function POST(
         const { action_type, new_value, notes } = body;
 
         if (!aggregatedIssueId) {
-            return NextResponse.json(
-                { success: false, error: { code: 'VALIDATION_ERROR', message: 'Issue ID is required' } },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'Issue ID is required' } };
+            logResponse('POST', PATH, 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
         if (!action_type) {
-            return NextResponse.json(
-                { success: false, error: { code: 'VALIDATION_ERROR', message: 'action_type is required' } },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'action_type is required' } };
+            logResponse('POST', PATH, 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
-        // Validate action_type
         const validActions = ['assign', 'override_priority', 'resolve', 'reopen', 'change_status'];
         if (!validActions.includes(action_type)) {
-            return NextResponse.json(
-                { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid action_type' } },
-                { status: 400 }
-            );
+            const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'Invalid action_type' } };
+            logResponse('POST', PATH, 400, res);
+            return NextResponse.json(res, { status: 400 });
         }
 
         // Fetch current issue state
@@ -61,10 +59,9 @@ export async function POST(
             .single();
 
         if (fetchError || !currentIssue) {
-            return NextResponse.json(
-                { success: false, error: { code: 'NOT_FOUND', message: 'Issue not found' } },
-                { status: 404 }
-            );
+            const res = { success: false, error: { code: 'NOT_FOUND', message: 'Issue not found' } };
+            logResponse('POST', PATH, 404, res);
+            return NextResponse.json(res, { status: 404 });
         }
 
         // Build previous_value and determine updates
@@ -74,10 +71,9 @@ export async function POST(
         switch (action_type) {
             case 'assign':
                 if (!new_value?.authority_id) {
-                    return NextResponse.json(
-                        { success: false, error: { code: 'VALIDATION_ERROR', message: 'authority_id required for assign action' } },
-                        { status: 400 }
-                    );
+                    const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'authority_id required for assign action' } };
+                    logResponse('POST', PATH, 400, res);
+                    return NextResponse.json(res, { status: 400 });
                 }
                 previousValue = { authority_id: currentIssue.authority_id };
                 updates = { authority_id: new_value.authority_id };
@@ -92,10 +88,9 @@ export async function POST(
                             new_value?.status;
 
                 if (!targetStatus) {
-                    return NextResponse.json(
-                        { success: false, error: { code: 'VALIDATION_ERROR', message: 'status required for change_status action' } },
-                        { status: 400 }
-                    );
+                    const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'status required for change_status action' } };
+                    logResponse('POST', PATH, 400, res);
+                    return NextResponse.json(res, { status: 400 });
                 }
 
                 previousValue = { status: currentIssue.status };
@@ -106,10 +101,9 @@ export async function POST(
                 // Priority overrides are logged but don't actually change the calculated priority
                 // The new priority_score is stored as a manual snapshot
                 if (new_value?.priority_score === undefined) {
-                    return NextResponse.json(
-                        { success: false, error: { code: 'VALIDATION_ERROR', message: 'priority_score required for override_priority action' } },
-                        { status: 400 }
-                    );
+                    const res = { success: false, error: { code: 'VALIDATION_ERROR', message: 'priority_score required for override_priority action' } };
+                    logResponse('POST', PATH, 400, res);
+                    return NextResponse.json(res, { status: 400 });
                 }
 
                 // Get current priority
@@ -169,22 +163,19 @@ export async function POST(
 
         if (actionError) {
             console.error('Failed to log admin action:', actionError);
-            return NextResponse.json(
-                { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to log action' } },
-                { status: 500 }
-            );
+            const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Failed to log action' } };
+            logResponse('POST', PATH, 500, res);
+            return NextResponse.json(res, { status: 500 });
         }
 
-        return NextResponse.json({
-            success: true,
-            data: adminAction as AdminAction,
-        });
+        const res = { success: true, data: adminAction as AdminAction };
+        logResponse('POST', PATH, 200, res);
+        return NextResponse.json(res);
 
     } catch (error) {
         console.error('Unexpected error in admin action:', error);
-        return NextResponse.json(
-            { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } },
-            { status: 500 }
-        );
+        const res = { success: false, error: { code: 'SERVER_ERROR', message: 'Internal server error' } };
+        logResponse('POST', PATH, 500, res);
+        return NextResponse.json(res, { status: 500 });
     }
 }

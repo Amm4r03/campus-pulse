@@ -1,4 +1,4 @@
-import type { Location } from '@/types'
+import type { Location, LocationType } from '@/types'
 
 export const CAMPUS_LOCATIONS: Location[] = [
   // Hostels
@@ -9,20 +9,20 @@ export const CAMPUS_LOCATIONS: Location[] = [
   { id: 'hostel-girls-2', name: 'Girls Hostel 2', type: 'hostel', is_active: true },
   { id: 'hostel-international', name: 'International Hostel', type: 'hostel', is_active: true },
   
-  // Academic Blocks
-  { id: 'block-a', name: 'Academic Block A', type: 'academic', is_active: true },
-  { id: 'block-b', name: 'Academic Block B', type: 'academic', is_active: true },
-  { id: 'block-c', name: 'Academic Block C', type: 'academic', is_active: true },
-  { id: 'block-d', name: 'Academic Block D', type: 'academic', is_active: true },
-  { id: 'pharmacy-block', name: 'Faculty of Pharmacy', type: 'academic', is_active: true },
-  { id: 'nursing-block', name: 'College of Nursing', type: 'academic', is_active: true },
-  { id: 'management-block', name: 'Faculty of Management', type: 'academic', is_active: true },
-  { id: 'engineering-block', name: 'School of Engineering', type: 'academic', is_active: true },
-  { id: 'law-block', name: 'Faculty of Law', type: 'academic', is_active: true },
+  // Academic Blocks (matches DB schema: academic_block)
+  { id: 'block-a', name: 'Academic Block A', type: 'academic_block', is_active: true },
+  { id: 'block-b', name: 'Academic Block B', type: 'academic_block', is_active: true },
+  { id: 'block-c', name: 'Academic Block C', type: 'academic_block', is_active: true },
+  { id: 'block-d', name: 'Academic Block D', type: 'academic_block', is_active: true },
+  { id: 'pharmacy-block', name: 'Faculty of Pharmacy', type: 'academic_block', is_active: true },
+  { id: 'nursing-block', name: 'College of Nursing', type: 'academic_block', is_active: true },
+  { id: 'management-block', name: 'Faculty of Management', type: 'academic_block', is_active: true },
+  { id: 'engineering-block', name: 'School of Engineering', type: 'academic_block', is_active: true },
+  { id: 'law-block', name: 'Faculty of Law', type: 'academic_block', is_active: true },
   
-  // Library
-  { id: 'central-library', name: 'Central Library', type: 'library', is_active: true },
-  { id: 'pharmacy-library', name: 'Pharmacy Library', type: 'library', is_active: true },
+  // Library (common_area per DB schema)
+  { id: 'central-library', name: 'Central Library', type: 'common_area', is_active: true },
+  { id: 'pharmacy-library', name: 'Pharmacy Library', type: 'common_area', is_active: true },
   
   // Sports
   { id: 'sports-complex', name: 'Sports Complex', type: 'sports', is_active: true },
@@ -38,12 +38,12 @@ export const CAMPUS_LOCATIONS: Location[] = [
   { id: 'hostel-canteen', name: 'Hostel Canteen', type: 'canteen', is_active: true },
   { id: 'pharmacy-canteen', name: 'Pharmacy Canteen', type: 'canteen', is_active: true },
   
-  // Other
-  { id: 'admin-block', name: 'Administrative Block', type: 'other', is_active: true },
-  { id: 'examination-hall', name: 'Examination Hall', type: 'other', is_active: true },
-  { id: 'auditorium', name: 'University Auditorium', type: 'other', is_active: true },
-  { id: 'parking', name: 'Parking Area', type: 'other', is_active: true },
-  { id: 'main-gate', name: 'Main Gate', type: 'other', is_active: true },
+  // Other (common_area per DB schema)
+  { id: 'admin-block', name: 'Administrative Block', type: 'common_area', is_active: true },
+  { id: 'examination-hall', name: 'Examination Hall', type: 'common_area', is_active: true },
+  { id: 'auditorium', name: 'University Auditorium', type: 'common_area', is_active: true },
+  { id: 'parking', name: 'Parking Area', type: 'common_area', is_active: true },
+  { id: 'main-gate', name: 'Main Gate', type: 'common_area', is_active: true },
 ]
 
 // Helper to get location by ID
@@ -67,13 +67,12 @@ export function getGroupedLocations(): Record<string, Location[]> {
   }, {} as Record<string, Location[]>)
 }
 
-// Location type labels for display
-export const LOCATION_TYPE_LABELS: Record<Location['type'], string> = {
+// Location type labels for display (keys match domain/DB LocationType)
+export const LOCATION_TYPE_LABELS: Record<LocationType, string> = {
   hostel: 'Hostels',
-  academic: 'Academic Buildings',
-  library: 'Libraries',
+  academic_block: 'Academic Buildings',
+  common_area: 'Common Areas',
   sports: 'Sports Facilities',
   hospital: 'Healthcare',
   canteen: 'Food & Dining',
-  other: 'Other',
 }

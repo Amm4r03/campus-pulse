@@ -269,6 +269,8 @@ CREATE INDEX idx_admin_actions_created ON admin_actions(created_at DESC);
 -- ============================================================================
 
 -- View: Aggregated issues with report counts and latest priority
+-- View: Aggregated issues with report counts and latest priority.
+-- Uses only joined names (category_name, location_name, authority_name) for display and filtering; no schema change required.
 CREATE OR REPLACE VIEW v_aggregated_issues_dashboard AS
 SELECT 
     ai.id,
